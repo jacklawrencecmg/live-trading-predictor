@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.database import engine, Base
 from app.api.routes import market, options, model, trades, backtest
-from app.api.routes import inference as inference_router
+from app.api.routes import inference as inference_routes
+from app.api.routes import signals as signals_routes
 from app.websocket.manager import websocket_router
 import logging
 import uuid
@@ -27,8 +28,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Options Research Platform",
-    description="Paper-trading options research with ML predictions",
+    title="Live Trading Predictor",
+    description="Paper-trading options research with ML predictions, signals, and risk controls",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -63,26 +64,29 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
+# Routers
 app.include_router(market.router, prefix="/api/market", tags=["market"])
 app.include_router(options.router, prefix="/api/options", tags=["options"])
 app.include_router(model.router, prefix="/api/model", tags=["model"])
 app.include_router(trades.router, prefix="/api/trades", tags=["trades"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["backtest"])
-app.include_router(inference_router.router, prefix="/api/inference", tags=["inference"])
+app.include_router(inference_routes.router, prefix="/api/inference", tags=["inference"])
+app.include_router(signals_routes.router, prefix="/api/signals", tags=["signals"])
 app.include_router(websocket_router)
 
 
-@app.get("/health")
+@app.get("/health", tags=["ops"])
 async def health():
     return {"status": "ok", "version": "2.0.0"}
 
 
-@app.get("/ready")
+@app.get("/ready", tags=["ops"])
 async def ready():
-    """Readiness check: verify DB connection."""
+    """Readiness: verify DB is reachable."""
     try:
+        import sqlalchemy
         async with engine.connect() as conn:
-            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+            await conn.execute(sqlalchemy.text("SELECT 1"))
         return {"status": "ready"}
     except Exception as e:
         return JSONResponse(status_code=503, content={"status": "not_ready", "error": str(e)})
