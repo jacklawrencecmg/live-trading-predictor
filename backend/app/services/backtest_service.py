@@ -5,43 +5,70 @@ from typing import List, Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from sklearn.metrics import brier_score_loss, log_loss, mean_absolute_error
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.backtest import BacktestResult
 from app.schemas.backtest import BacktestRequest, BacktestResultOut
-from app.services.feature_pipeline import build_features, features_to_array, FEATURE_NAMES
+from app.feature_pipeline.features import build_feature_matrix, FEATURE_COLS
 from app.services.model_service import train_models, compute_calibration, set_models
 from app.core.config import settings
 
 
 def _prepare_dataset(df: pd.DataFrame, iv_rank: float = 0.5, put_call_ratio: float = 1.0, atm_iv: float = 0.2):
-    """Build features and labels from OHLCV dataframe."""
+    """
+    Build features and labels from OHLCV dataframe using the leakage-safe pipeline.
+
+    Feature alignment (IMPORTANT):
+    - build_feature_matrix() applies .shift(1) so feat[i] uses only bars 0..i-1.
+      feat[i] represents information available at the OPEN of bar i.
+    - label[i] = sign(close[i+1] - close[i]) — direction of the bar that follows i.
+    - Row i in X predicts row i in y: no future data appears in any feature row.
+
+    This replaces the previous O(n²) loop that called build_features(window[:i+1])
+    per bar. That loop also produced a 14-feature vector (the old pipeline) while
+    inference_service uses a 22-feature vector (the new pipeline), causing a
+    training/inference feature-dimension mismatch that would crash or silently
+    corrupt predictions at run time.
+
+    Options features (iv_rank, put_call_ratio, atm_iv) are broadcast constants
+    here because the backtest only uses OHLCV data. In production they should be
+    time-stamped snapshots filtered to snapshot_time <= bar_open_time[i].
+    """
     df = df.copy().reset_index(drop=True)
     df.columns = [c.lower() for c in df.columns]
 
-    rows = []
-    labels_dir = []
-    labels_mag = []
+    # build_feature_matrix requires a bar_open_time column.
+    if "bar_open_time" not in df.columns:
+        if hasattr(df.index, 'to_pydatetime') or str(df.index.dtype).startswith('datetime'):
+            df["bar_open_time"] = df.index.values
+        else:
+            # Placeholder timestamps preserve row ordering; time features will be
+            # inaccurate but do not affect correctness of the leakage test.
+            df["bar_open_time"] = pd.date_range(
+                start="2020-01-02 14:30", periods=len(df), freq="5min"
+            )
 
-    for i in range(30, len(df) - 1):
-        window = df.iloc[: i + 1]
-        feat = build_features(window, iv_rank, put_call_ratio, atm_iv)
-        if feat is None:
-            continue
-        close_now = float(df["close"].iloc[i])
-        close_next = float(df["close"].iloc[i + 1])
-        direction = 1 if close_next > close_now else 0
-        magnitude = abs(close_next / close_now - 1)
-        rows.append(features_to_array(feat))
-        labels_dir.append(direction)
-        labels_mag.append(magnitude)
+    # VWAP approximation if not already present
+    if "vwap" not in df.columns:
+        df["vwap"] = (df["high"] + df["low"] + df["close"]) / 3
 
-    X = np.array(rows)
-    y_dir = np.array(labels_dir)
-    y_mag = np.array(labels_mag)
-    return X, y_dir, y_mag
+    # Build feature matrix in O(n) — leakage-safe via .shift(1)
+    feat_df = build_feature_matrix(df)
+
+    # Labels aligned to the same row index as features
+    close = df["close"]
+    y_dir_series = (close.shift(-1) > close).astype(int)   # 1 = up, 0 = down/flat
+    y_mag_series = (close.shift(-1) / close - 1).abs()
+
+    # Drop last row: label[n-1] requires close[n] which does not exist
+    X_raw = feat_df[FEATURE_COLS].values[:-1]
+    y_dir = y_dir_series.values[:-1]
+    y_mag = y_mag_series.values[:-1]
+
+    # Remove warmup rows where features are NaN (initial lookback windows not yet full)
+    valid = ~np.isnan(X_raw).any(axis=1)
+    return X_raw[valid], y_dir[valid], y_mag[valid]
 
 
 def _simulate_trades(
@@ -79,9 +106,15 @@ def _simulate_trades(
 
     total_return = (cash - capital) / capital
     pnl_arr = np.array(pnl_series)
-    active = pnl_arr[pnl_arr != 0]
-    if len(active) > 1:
-        sharpe = float(active.mean() / (active.std() + 1e-9) * math.sqrt(252))
+    # Sharpe includes all periods (active and idle) so idle time penalises the ratio.
+    # Using only active trades would inflate Sharpe by ignoring the cost of waiting.
+    #
+    # Annualization: pnl_arr contains one value per 5-minute bar.
+    # Periods per year for 5-min bars = 252 trading days × 78 bars/day = 19,656.
+    # Using sqrt(252) instead would inflate Sharpe by sqrt(78) ≈ 8.83×.
+    _BARS_PER_YEAR = 252 * 78
+    if len(pnl_arr) > 1 and pnl_arr.std() > 0:
+        sharpe = float(pnl_arr.mean() / pnl_arr.std() * math.sqrt(_BARS_PER_YEAR))
     else:
         sharpe = 0.0
 
@@ -94,6 +127,7 @@ def _simulate_trades(
 
 
 async def run_backtest(req: BacktestRequest, db: AsyncSession) -> BacktestResult:
+    import yfinance as yf  # lazy import: only needed at runtime, not test collection
     loop = asyncio.get_event_loop()
     df_raw = await loop.run_in_executor(
         None,
@@ -179,7 +213,12 @@ async def run_backtest(req: BacktestRequest, db: AsyncSession) -> BacktestResult
         if n_folds_actual >= req.n_folds:
             break
 
-    # Train final model on all data
+    # Train and promote the production model on all available data.
+    # NOTE: This is intentional. Walk-forward folds evaluate on held-out windows
+    # using per-fold models. The final model is trained on all data so inference
+    # can use the most recent information. It is NOT evaluated on the same data
+    # it was trained on — that evaluation was done fold-by-fold above.
+    # Callers should treat fold metrics as the honest out-of-sample estimate.
     if len(X) > 20 and len(np.unique(y_dir)) >= 2:
         dir_m_final, mag_m_final = train_models(X, y_dir, y_mag)
         set_models(dir_m_final, mag_m_final)

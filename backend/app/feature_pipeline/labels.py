@@ -55,10 +55,17 @@ def ternary_label(
     next_ret = df["close"].shift(-1) / df["close"] - 1
 
     if use_atr:
-        h, l, pc = df["high"], df["low"], df["close"].shift(1)
+        # Shift high/low by 1 so that ATR[i] only uses bars 0..i-1.
+        # Without this, ATR[i] would include bar i's intrabar range, making
+        # the threshold for row i depend on information that is contemporaneous
+        # with the target bar. The label for row i should only use past data
+        # to define what counts as a "meaningful" move.
+        h = df["high"].shift(1)
+        l = df["low"].shift(1)
+        pc = df["close"].shift(2)  # prior close for TR: requires close[i-2]
         tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
         atr = tr.ewm(com=13, adjust=False).mean()
-        threshold = threshold_multiplier * atr / (df["close"] + 1e-9)
+        threshold = threshold_multiplier * atr / (df["close"].shift(1) + 1e-9)
     else:
         log_ret = np.log(df["close"] / df["close"].shift(1))
         vol = log_ret.rolling(10).std()

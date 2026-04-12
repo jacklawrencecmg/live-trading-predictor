@@ -15,7 +15,6 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 import pandas as pd
-import yfinance as yf
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,14 +39,29 @@ def _bar_close_time(bar_open: datetime, timeframe: str) -> datetime:
     return bar_open + timedelta(minutes=minutes)
 
 
+# Guard buffer added after bar_close_time before marking a bar as closed.
+# Real-time market data may lag the nominal bar-close by 50–500 ms due to
+# exchange dissemination, vendor processing, and network propagation.
+# Without this buffer, a bar marked closed at bar_close_time + 1 ms may
+# still have incomplete OHLC data from the vendor.
+_BAR_CLOSE_BUFFER_SECONDS: int = 5
+
+
 def _is_bar_closed(bar_open: datetime, timeframe: str) -> bool:
-    """A bar is closed if its close_time <= now (UTC)."""
+    """
+    A bar is data-safe when bar_close_time + buffer <= now (UTC).
+
+    The 5-second buffer guards the window [bar_close, bar_close + 5s]
+    where the bar has nominally ended but price data may not yet have
+    propagated from the exchange through the vendor API.
+    """
     close = _bar_close_time(bar_open, timeframe)
-    return close <= datetime.utcnow()
+    return (close + timedelta(seconds=_BAR_CLOSE_BUFFER_SECONDS)) <= datetime.utcnow()
 
 
 def _parse_yf_df(df: pd.DataFrame, symbol: str, timeframe: str, source: str = "yfinance") -> List[dict]:
     """Convert yfinance DataFrame to list of bar dicts."""
+    now = datetime.utcnow()
     bars = []
     for ts, row in df.iterrows():
         if hasattr(ts, "to_pydatetime"):
@@ -56,9 +70,18 @@ def _parse_yf_df(df: pd.DataFrame, symbol: str, timeframe: str, source: str = "y
             bar_open = pd.Timestamp(ts).to_pydatetime().replace(tzinfo=None)
 
         bar_close = _bar_close_time(bar_open, timeframe)
-        is_closed = _is_bar_closed(bar_open, timeframe)
+        is_closed = bar_close <= now
 
-        # Compute VWAP approximation: (H+L+C)/3 * volume / volume
+        # availability_time: for historical backfill this equals now (ingested_at).
+        # For a live bar it would be bar_close_time; we use now for all backfill rows.
+        availability_time = now
+
+        # A row is stale if it arrived more than one full timeframe after bar_close_time.
+        timeframe_minutes = TIMEFRAME_MINUTES.get(timeframe, 5)
+        staleness_threshold = timedelta(minutes=timeframe_minutes)
+        staleness_flag = (now - bar_close) > staleness_threshold if is_closed else False
+
+        # VWAP approximation: (H+L+C)/3
         vwap = (float(row["High"]) + float(row["Low"]) + float(row["Close"])) / 3
 
         bars.append({
@@ -66,6 +89,10 @@ def _parse_yf_df(df: pd.DataFrame, symbol: str, timeframe: str, source: str = "y
             "timeframe": timeframe,
             "bar_open_time": bar_open,
             "bar_close_time": bar_close,
+            "availability_time": availability_time,
+            "ingested_at": now,
+            "source": source,
+            "staleness_flag": staleness_flag,
             "open": float(row["Open"]),
             "high": float(row["High"]),
             "low": float(row["Low"]),
@@ -73,8 +100,6 @@ def _parse_yf_df(df: pd.DataFrame, symbol: str, timeframe: str, source: str = "y
             "volume": float(row["Volume"]),
             "vwap": vwap,
             "is_closed": is_closed,
-            "source": source,
-            "ingested_at": datetime.utcnow(),
         })
     return bars
 
@@ -97,7 +122,9 @@ async def _upsert_bars(session: AsyncSession, bars: List[dict]) -> int:
                 "volume": stmt.excluded.volume,
                 "vwap": stmt.excluded.vwap,
                 "is_closed": stmt.excluded.is_closed,
+                "availability_time": stmt.excluded.availability_time,
                 "ingested_at": stmt.excluded.ingested_at,
+                "staleness_flag": stmt.excluded.staleness_flag,
             },
         )
         await session.execute(stmt)
@@ -132,6 +159,7 @@ async def backfill(
 
     for attempt in range(1, max_retries + 1):
         try:
+            import yfinance as yf  # lazy import: only needed at runtime, not test collection
             loop = asyncio.get_event_loop()
             df = await loop.run_in_executor(
                 None,

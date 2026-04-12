@@ -105,11 +105,22 @@ def evaluate_model(
     probs = model.predict_proba(X_test)[:, 1]
     preds = (probs >= 0.5).astype(int)
 
+    brier = float(brier_score_loss(y_test, probs))
+    # Brier skill score: 1 - (model_brier / reference_brier)
+    # Reference = always predict base rate (naive classifier).
+    # A random binary classifier has Brier ≈ 0.25.
+    # bss > 0 means model is better than naive; bss < 0 means worse.
+    base_rate = float(np.mean(y_test))
+    reference_brier = float(brier_score_loss(y_test, np.full_like(probs, base_rate)))
+    bss = 1.0 - brier / (reference_brier + 1e-9)
+
     metrics = {
         "accuracy": float(accuracy_score(y_test, preds)),
         "precision": float(precision_score(y_test, preds, zero_division=0)),
         "recall": float(recall_score(y_test, preds, zero_division=0)),
-        "brier_score": float(brier_score_loss(y_test, probs)),
+        "brier_score": brier,
+        "brier_skill_score": round(bss, 4),   # positive = beats naive
+        "reference_brier": round(reference_brier, 6),
         "log_loss": float(log_loss(y_test, probs)),
         "n_samples": int(len(y_test)),
     }
@@ -175,11 +186,22 @@ def train_with_walk_forward(
         metrics["fold"] = fold
         metrics["train_size"] = len(train_idx)
         metrics["test_size"] = len(test_idx)
+
+        # Train-set Brier — gap between train and test reveals overfitting.
+        # Ratio > 1.5 (test Brier 50% worse than train) is a red flag.
+        train_probs = model.predict_proba(X_train)[:, 1]
+        train_brier = float(brier_score_loss(y_train, train_probs))
+        metrics["train_brier"] = round(train_brier, 6)
+        metrics["overfit_ratio"] = round(
+            metrics["brier_score"] / (train_brier + 1e-9), 3
+        )
+
         fold_metrics.append(metrics)
 
         logger.info(
-            "Fold %d: acc=%.3f brier=%.4f auc=%s",
-            fold, metrics["accuracy"], metrics["brier_score"],
+            "Fold %d: acc=%.3f brier=%.4f train_brier=%.4f overfit_ratio=%.2f bss=%.3f auc=%s",
+            fold, metrics["accuracy"], metrics["brier_score"], train_brier,
+            metrics["overfit_ratio"], metrics["brier_skill_score"],
             f"{metrics['roc_auc']:.3f}" if metrics["roc_auc"] else "N/A"
         )
 

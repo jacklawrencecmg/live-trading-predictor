@@ -16,7 +16,11 @@ Default rule set:
 
 from dataclasses import dataclass
 from typing import Optional, List
-from datetime import datetime, time
+from datetime import datetime, time, timezone
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore
 
 
 @dataclass
@@ -116,18 +120,24 @@ def evaluate_rules(
                         expected_move_pct, signal_quality_score, regime, config,
                         f"regime={regime} not in allowed={config.allowed_regimes}")
 
-    # 5. Session close check (ET time proxy)
+    # 5. Session close check — DST-safe UTC→ET conversion
+    #    US/Eastern is UTC-5 (EST) Nov–Mar and UTC-4 (EDT) Mar–Nov.
+    #    We use zoneinfo to get the correct offset at the moment of evaluation.
+    ET = ZoneInfo("America/New_York")
+    if now.tzinfo is None:
+        # Assume UTC if naive
+        now_aware = now.replace(tzinfo=timezone.utc)
+    else:
+        now_aware = now
+    now_et_dt = now_aware.astimezone(ET)
+    now_et = now_et_dt.time()
+
     session_end = time(config.session_end_hour, config.session_end_minute)
-    session_cutoff_hour = config.session_end_hour
-    session_cutoff_minute = config.session_end_minute - config.suppress_last_minutes
-    if session_cutoff_minute < 0:
-        session_cutoff_hour -= 1
-        session_cutoff_minute += 60
-    session_cutoff = time(session_cutoff_hour, session_cutoff_minute)
-    now_et = time(
-        (now.hour - 5) % 24,  # rough UTC→ET
-        now.minute
+    total_cutoff_minutes = (
+        config.session_end_hour * 60 + config.session_end_minute
+        - config.suppress_last_minutes
     )
+    session_cutoff = time(total_cutoff_minutes // 60, total_cutoff_minutes % 60)
     if session_cutoff <= now_et <= session_end:
         return _blocked(symbol, "near_session_close", prob_up, prob_down,
                         expected_move_pct, signal_quality_score, regime, config,

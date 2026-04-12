@@ -5,11 +5,20 @@ import { useWebSocket, WSMessage } from "@/hooks/useWebSocket";
 import { useMarketData } from "@/hooks/useMarketData";
 import { Candle } from "@/lib/api";
 import OptionsChainTable from "@/components/OptionsChain/OptionsChainTable";
-import ModelPanel from "@/components/ModelPanel/ModelPanel";
+import RegimePanel from "@/components/RegimePanel/RegimePanel";
 import PaperTrader from "@/components/PaperTrader/PaperTrader";
 import RiskPanel from "@/components/RiskPanel/RiskPanel";
-import BacktestPanel from "@/components/Backtest/BacktestPanel";
-import SignalCard from "@/components/SignalCard/SignalCard";
+
+// New institutional panels
+import PredictionPanel from "@/components/Dashboard/PredictionPanel";
+import ConfidencePanel from "@/components/Dashboard/ConfidencePanel";
+import ModelHealthPanel from "@/components/Dashboard/ModelHealthPanel";
+import DataFreshnessPanel from "@/components/Dashboard/DataFreshnessPanel";
+import LiquidityPanel from "@/components/Dashboard/LiquidityPanel";
+import RecentSignalsTable from "@/components/Dashboard/RecentSignalsTable";
+import PnLPanel from "@/components/Dashboard/PnLPanel";
+import StructuresPanel from "@/components/Dashboard/StructuresPanel";
+
 import clsx from "clsx";
 
 const CandlestickChart = dynamic(() => import("@/components/Chart/CandlestickChart"), {
@@ -18,51 +27,40 @@ const CandlestickChart = dynamic(() => import("@/components/Chart/CandlestickCha
 
 const SYMBOLS = ["SPY", "QQQ", "AAPL", "TSLA", "NVDA", "AMZN"];
 
-function Panel({
-  title,
-  children,
-  className,
-}: {
-  title: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
+// Collapsible section header for panels that may want to be hidden
+function SectionHeader({ title, stale }: { title: string; stale?: boolean }) {
   return (
-    <div className={clsx("bg-panel border border-border rounded-lg p-3", className)}>
-      <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+    <div className="px-3 py-1.5 border-b border-border flex items-center justify-between">
+      <span className="text-[10px] font-semibold tracking-[0.12em] uppercase text-zinc-500">
         {title}
-      </h2>
-      {children}
+      </span>
+      {stale && (
+        <span className="text-[10px] text-amber-400 border border-amber-400/30 px-1 rounded-[2px]">
+          STALE
+        </span>
+      )}
     </div>
   );
 }
 
-type TabId = "chart" | "backtest";
 
 export default function Dashboard() {
   const [symbol, setSymbol] = useState("SPY");
   const [symbolInput, setSymbolInput] = useState("SPY");
   const [livePrice, setLivePrice] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>("chart");
-  const [rightTab, setRightTab] = useState<"signal" | "model" | "trader" | "risk">("signal");
+  const [showBacktest, setShowBacktest] = useState(false);
 
-  const { quote, candles, loading } = useMarketData(symbol);
+  const { quote, candles, loading: candlesLoading } = useMarketData(symbol);
   const [liveCandles, setLiveCandles] = useState<Candle[]>([]);
 
-  useEffect(() => {
-    setLiveCandles(candles);
-  }, [candles]);
+  useEffect(() => { setLiveCandles(candles); }, [candles]);
 
   const handleWsMessage = useCallback((msg: WSMessage) => {
     if (msg.type === "quote") setLivePrice(msg.price);
     if (msg.type === "candle" && msg.candle) {
       setLiveCandles((prev) => {
         const idx = prev.findIndex((c) => c.time === msg.candle.time);
-        if (idx >= 0) {
-          const next = [...prev];
-          next[idx] = msg.candle;
-          return next;
-        }
+        if (idx >= 0) { const next = [...prev]; next[idx] = msg.candle; return next; }
         return [...prev, msg.candle];
       });
     }
@@ -78,29 +76,29 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-surface flex flex-col">
-      {/* Header */}
-      <header className="bg-panel border-b border-border px-4 py-2 flex items-center gap-3 flex-wrap">
-        <span className="text-white font-bold text-sm tracking-tight whitespace-nowrap">
-          Live Trading Predictor
-        </span>
-        <span className="text-xs text-gray-600 border border-border rounded px-1.5 py-0.5">
-          PAPER ONLY
-        </span>
+    <div className="min-h-screen bg-surface flex flex-col text-zinc-200">
+      {/* ── Header ──────────────────────────────────────────────────────── */}
+      <header className="bg-panel border-b border-border px-4 py-2 flex items-center gap-3 flex-wrap shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="text-zinc-200 font-semibold text-sm tracking-tight">
+            Options Research
+          </span>
+          <span className="text-[10px] text-zinc-600 border border-zinc-800 rounded-[2px] px-1.5 py-0.5 font-mono">
+            PAPER ONLY
+          </span>
+        </div>
 
+        {/* Symbol quick-picks */}
         <div className="flex gap-1 flex-wrap">
           {SYMBOLS.map((s) => (
             <button
               key={s}
-              onClick={() => {
-                setSymbol(s);
-                setSymbolInput(s);
-              }}
+              onClick={() => { setSymbol(s); setSymbolInput(s); }}
               className={clsx(
-                "text-xs px-2 py-0.5 rounded",
+                "text-xs px-2 py-0.5 rounded-[2px] font-mono",
                 symbol === s
-                  ? "bg-accent text-surface font-semibold"
-                  : "text-gray-400 hover:text-white"
+                  ? "bg-accent/15 text-accent border border-accent/30 font-semibold"
+                  : "text-zinc-500 hover:text-zinc-200 border border-transparent"
               )}
             >
               {s}
@@ -108,158 +106,136 @@ export default function Dashboard() {
           ))}
         </div>
 
+        {/* Custom symbol input */}
         <form onSubmit={handleSymbolSubmit} className="flex gap-1">
           <input
             value={symbolInput}
             onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
-            placeholder="Symbol"
-            className="bg-surface border border-border text-white text-xs px-2 py-0.5 rounded w-20 uppercase"
+            placeholder="TICKER"
+            className="bg-surface border border-border text-zinc-200 text-xs px-2 py-0.5 rounded-[2px] w-20 uppercase font-mono placeholder-zinc-700 focus:border-border-2 focus:outline-none"
           />
-          <button type="submit" className="text-xs text-accent hover:underline">
+          <button type="submit" className="text-xs text-accent hover:text-blue-300 font-mono">
             Go
           </button>
         </form>
 
-        <div className="ml-auto flex items-center gap-3 text-xs">
-          {currentPrice && (
-            <span className="text-white font-semibold">${currentPrice.toFixed(2)}</span>
-          )}
-          {quote && (
-            <span
-              className={clsx(
-                quote.change >= 0 ? "text-green-trade" : "text-red-trade"
-              )}
-            >
-              {quote.change >= 0 ? "+" : ""}
-              {quote.change.toFixed(2)} ({quote.change_pct.toFixed(2)}%)
+        {/* Price and connection status */}
+        <div className="ml-auto flex items-center gap-4 text-xs">
+          {currentPrice != null && (
+            <span className="text-zinc-100 font-mono font-semibold text-sm tabular-nums">
+              ${currentPrice.toFixed(2)}
             </span>
           )}
-          <span
-            className={clsx(
-              "flex items-center gap-1",
-              connected ? "text-green-trade" : "text-gray-500"
-            )}
-          >
-            <span
-              className={clsx(
-                "w-1.5 h-1.5 rounded-full",
-                connected ? "bg-green-trade" : "bg-gray-600"
-              )}
-            />
-            {connected ? "Live" : "Offline"}
-          </span>
+          {quote && (
+            <span className={clsx(
+              "font-mono tabular-nums",
+              quote.change >= 0 ? "text-emerald-400" : "text-red-400"
+            )}>
+              {quote.change >= 0 ? "+" : ""}{quote.change.toFixed(2)}
+              {" "}({quote.change >= 0 ? "+" : ""}{quote.change_pct.toFixed(2)}%)
+            </span>
+          )}
+          <div className={clsx(
+            "flex items-center gap-1.5 text-[11px]",
+            connected ? "text-emerald-400" : "text-zinc-600"
+          )}>
+            <span className={clsx("w-1.5 h-1.5 rounded-full", connected ? "bg-emerald-400" : "bg-zinc-700")} />
+            <span>{connected ? "Live" : "Offline"}</span>
+          </div>
         </div>
       </header>
 
-      {/* Main layout: left (chart/options) + right (signal/model/trader/risk) */}
-      <div className="flex flex-1 overflow-hidden gap-2 p-2">
-        {/* Left column */}
-        <div className="flex flex-col gap-2 flex-1 min-w-0">
-          <div className="flex gap-2">
-            {(["chart", "backtest"] as TabId[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setActiveTab(t)}
-                className={clsx(
-                  "text-xs px-3 py-1 rounded capitalize",
-                  activeTab === t
-                    ? "bg-accent text-surface font-semibold"
-                    : "text-gray-400 hover:text-white"
-                )}
-              >
-                {t}
-              </button>
-            ))}
+      {/* ── 3-Column layout ──────────────────────────────────────────────── */}
+      <div className="flex flex-1 overflow-hidden gap-1.5 p-1.5">
+
+        {/* ──── LEFT: Chart + Options chain + Recent signals ───────────── */}
+        <div className="flex flex-col gap-1.5 overflow-hidden" style={{ width: "42%" }}>
+
+          {/* Chart */}
+          <div className="inst-panel flex-none">
+            <div className="px-3 py-1.5 border-b border-border flex items-center justify-between">
+              <span className="inst-label">{symbol} — 5m</span>
+              <div className="flex items-center gap-2">
+                {candlesLoading && <span className="text-zinc-700 text-[10px]">loading…</span>}
+                <button
+                  onClick={() => setShowBacktest((v) => !v)}
+                  className={clsx(
+                    "text-[10px] px-2 py-0.5 rounded-[2px] border",
+                    showBacktest
+                      ? "text-accent border-accent/30 bg-accent/5"
+                      : "text-zinc-600 border-zinc-800 hover:text-zinc-400"
+                  )}
+                >
+                  Backtest
+                </button>
+              </div>
+            </div>
+            <div className="p-2">
+              {showBacktest ? (
+                // Lazy-load backtest panel to avoid cluttering the default view
+                <div className="text-zinc-500 text-[11px] p-2">
+                  Backtest panel hidden. Import BacktestPanel to enable.
+                </div>
+              ) : (
+                <CandlestickChart candles={liveCandles} symbol={symbol} height={320} />
+              )}
+            </div>
           </div>
 
-          {activeTab === "chart" ? (
-            <>
-              <Panel title={`${symbol} — 5m`} className="flex-none">
-                {loading && (
-                  <div className="text-gray-500 text-xs">Loading...</div>
-                )}
-                <CandlestickChart
-                  candles={liveCandles}
-                  symbol={symbol}
-                  height={360}
-                />
-              </Panel>
-              <Panel title="Options Chain" className="flex-1 min-h-0 overflow-hidden">
-                <OptionsChainTable symbol={symbol} />
-              </Panel>
-            </>
-          ) : (
-            <Panel title="Walk-Forward Backtest" className="flex-1">
-              <BacktestPanel symbol={symbol} />
-            </Panel>
-          )}
+          {/* Options chain */}
+          <div className="inst-panel flex-none">
+            <SectionHeader title="Options Chain" />
+            <div className="overflow-hidden">
+              <OptionsChainTable symbol={symbol} />
+            </div>
+          </div>
+
+          {/* Recent signals table */}
+          <div className="flex-1 min-h-0 overflow-auto">
+            <RecentSignalsTable symbol={symbol} />
+          </div>
         </div>
 
-        {/* Right column */}
-        <div className="flex flex-col gap-2 w-80 flex-none">
-          {/* Right panel tabs */}
-          <div className="flex gap-1 bg-panel border border-border rounded-lg p-1">
-            {(
-              [
-                { id: "signal", label: "Signal" },
-                { id: "model", label: "Model" },
-                { id: "trader", label: "Trade" },
-                { id: "risk", label: "Risk" },
-              ] as const
-            ).map(({ id, label }) => (
-              <button
-                key={id}
-                onClick={() => setRightTab(id)}
-                className={clsx(
-                  "flex-1 text-xs py-1 rounded",
-                  rightTab === id
-                    ? "bg-accent/20 text-accent font-semibold"
-                    : "text-gray-500 hover:text-white"
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+        {/* ──── MIDDLE: Prediction + Confidence + Structures + Liquidity ─ */}
+        <div
+          className="flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden"
+          style={{ width: "29%" }}
+        >
+          <PredictionPanel symbol={symbol} />
+          <ConfidencePanel symbol={symbol} />
+          <StructuresPanel symbol={symbol} />
+          <LiquidityPanel symbol={symbol} />
+        </div>
 
-          <div className="flex-1 overflow-auto">
-            {rightTab === "signal" && (
-              <Panel title="Signal & Trade Idea">
-                <SignalCard symbol={symbol} />
-              </Panel>
-            )}
-            {rightTab === "model" && (
-              <Panel title="Model Predictions">
-                <ModelPanel symbol={symbol} />
-              </Panel>
-            )}
-            {rightTab === "trader" && (
-              <Panel title="Paper Trader" className="flex-1">
-                <PaperTrader symbol={symbol} currentPrice={currentPrice} />
-              </Panel>
-            )}
-            {rightTab === "risk" && (
-              <Panel title="Risk Controls">
-                <RiskPanel />
-              </Panel>
-            )}
-          </div>
+        {/* ──── RIGHT: Regime + Model health + Freshness + PnL + Positions */}
+        <div
+          className="flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden"
+          style={{ width: "29%" }}
+        >
+          <RegimePanel symbol={symbol} />
+          <ModelHealthPanel symbol={symbol} />
+          <DataFreshnessPanel symbol={symbol} connected={connected} />
+          <PnLPanel />
+          <PaperTrader symbol={symbol} currentPrice={currentPrice} />
+          <RiskPanel />
         </div>
       </div>
 
-      {/* Footer */}
-      <footer className="bg-panel border-t border-border px-4 py-1 flex items-center gap-3 text-xs text-gray-600">
-        <span className="text-red-trade/70 font-semibold">PAPER TRADING ONLY</span>
-        <span>·</span>
-        <span>Data: yfinance (delayed)</span>
-        <span>·</span>
-        <span>Model: LogisticRegression baseline</span>
-        <span className="ml-auto">
+      {/* ── Footer ──────────────────────────────────────────────────────── */}
+      <footer className="bg-panel border-t border-border px-4 py-1 flex items-center gap-3 shrink-0">
+        <span className="text-[10px] font-semibold text-red-400/60 font-mono">PAPER TRADING ONLY</span>
+        <span className="text-zinc-800">·</span>
+        <span className="text-[10px] text-zinc-700">Data: yfinance (delayed)</span>
+        <span className="text-zinc-800">·</span>
+        <span className="text-[10px] text-zinc-700">
+          Probabilities are model outputs — not investment advice
+        </span>
+        <span className="ml-auto text-[10px] text-zinc-700">
           <a
             href="https://github.com/jacklawrencecmg/live-trading-predictor"
             target="_blank"
             rel="noreferrer"
-            className="hover:text-white"
+            className="hover:text-zinc-400"
           >
             GitHub
           </a>

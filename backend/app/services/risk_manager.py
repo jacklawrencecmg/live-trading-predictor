@@ -76,8 +76,19 @@ async def check_all_risks(
     trade_value: float,
 ) -> None:
     """Raises RiskViolation if any check fails."""
+    # Check both the Redis kill switch (this module) and the governance DB-backed
+    # kill switch (app.governance.kill_switch) so that activating either one halts
+    # trading.  The governance cached check is TTL-based (5 s) and adds no I/O.
     if await is_kill_switch_active():
         raise RiskViolation("Kill switch is active — all trading halted")
+    try:
+        from app.governance.kill_switch import KillSwitchService as _GovKS
+        if _GovKS.is_active_cached():
+            raise RiskViolation("Governance kill switch is active — all trading halted")
+    except RiskViolation:
+        raise
+    except Exception:
+        pass  # governance module unavailable — degrade gracefully
 
     capital = await get_capital()
     daily_pnl = await get_daily_pnl()

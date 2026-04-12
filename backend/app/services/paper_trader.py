@@ -15,6 +15,7 @@ from app.services.risk_manager import (
     record_trade_time, RiskViolation, is_kill_switch_active,
 )
 from app.services.market_data import fetch_quote
+from app.paper_trading.position_manager import update_position as _update_position_impl
 
 
 async def execute_paper_trade(
@@ -56,14 +57,14 @@ async def execute_paper_trade(
     # Update position
     await _update_position(trade_req, price, db)
 
-    # Update capital (debit/credit)
+    # Update capital (debit on open, credit on close)
     capital = await get_capital()
-    is_open = trade_req.action in ("BTO", "STO", "buy")
-    if is_open:
+    is_opening = trade_req.action in ("BTO", "STO")
+    if is_opening:
         await set_capital(capital - trade_value)
     else:
-        pnl = trade_value - trade_value  # simplified: close at same price = 0 PnL (will update with real price)
-        await add_pnl(0)
+        # Credit back the close proceeds; realized PnL is tracked in _update_position
+        await set_capital(capital + trade_value)
 
     # Record cooldown
     await record_trade_time(trade_req.symbol)
@@ -99,46 +100,8 @@ async def execute_paper_trade(
 
 
 async def _update_position(trade_req: TradeCreate, price: float, db: AsyncSession):
-    result = await db.execute(
-        select(Position).where(
-            Position.symbol == trade_req.symbol,
-            Position.option_symbol == trade_req.option_symbol,
-            Position.is_open == True,
-        )
-    )
-    pos = result.scalar_one_or_none()
-
-    qty = trade_req.quantity
-    if trade_req.action in ("STO", "sell"):
-        qty = -qty
-
-    if pos is None:
-        pos = Position(
-            symbol=trade_req.symbol,
-            option_symbol=trade_req.option_symbol,
-            quantity=qty,
-            avg_cost=price,
-            current_price=price,
-            strike=trade_req.strike,
-            expiry=trade_req.expiry,
-            option_type=trade_req.option_type,
-        )
-        db.add(pos)
-    else:
-        total_qty = pos.quantity + qty
-        if total_qty == 0:
-            pnl = (price - pos.avg_cost) * pos.quantity
-            await add_pnl(pnl)
-            pos.realized_pnl += pnl
-            pos.is_open = False
-            pos.closed_at = datetime.utcnow()
-        else:
-            if (pos.quantity > 0 and qty > 0) or (pos.quantity < 0 and qty < 0):
-                # Adding to position: update avg cost
-                new_cost = (pos.avg_cost * pos.quantity + price * qty) / total_qty
-                pos.avg_cost = new_cost
-            pos.quantity = total_qty
-            pos.current_price = price
+    """Delegates to position_manager.update_position, wiring in add_pnl from risk_manager."""
+    await _update_position_impl(trade_req, price, db, on_pnl=add_pnl)
 
 
 async def get_positions(db: AsyncSession) -> List[PositionOut]:

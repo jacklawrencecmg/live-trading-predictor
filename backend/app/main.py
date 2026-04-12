@@ -6,6 +6,10 @@ from app.core.database import engine, Base
 from app.api.routes import market, options, model, trades, backtest
 from app.api.routes import inference as inference_routes
 from app.api.routes import signals as signals_routes
+from app.api.routes import uncertainty as uncertainty_routes
+from app.api.routes import regime as regime_routes
+from app.api.routes import decision as decision_routes
+from app.api.routes import governance as governance_routes
 from app.websocket.manager import websocket_router
 import logging
 import uuid
@@ -72,6 +76,10 @@ app.include_router(trades.router, prefix="/api/trades", tags=["trades"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["backtest"])
 app.include_router(inference_routes.router, prefix="/api/inference", tags=["inference"])
 app.include_router(signals_routes.router, prefix="/api/signals", tags=["signals"])
+app.include_router(uncertainty_routes.router, prefix="/api/uncertainty", tags=["uncertainty"])
+app.include_router(regime_routes.router, prefix="/api/regime", tags=["regime"])
+app.include_router(decision_routes.router, prefix="/api/decision", tags=["decision"])
+app.include_router(governance_routes.router, prefix="/api/governance", tags=["governance"])
 app.include_router(websocket_router)
 
 
