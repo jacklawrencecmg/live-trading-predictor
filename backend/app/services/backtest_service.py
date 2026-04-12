@@ -12,6 +12,7 @@ from app.models.backtest import BacktestResult
 from app.schemas.backtest import BacktestRequest, BacktestResultOut
 from app.feature_pipeline.features import build_feature_matrix, FEATURE_COLS
 from app.services.model_service import train_models, compute_calibration, set_models
+from app.ml_models.baseline import save_model
 from app.core.config import settings
 
 
@@ -222,6 +223,7 @@ async def run_backtest(req: BacktestRequest, db: AsyncSession) -> BacktestResult
     if len(X) > 20 and len(np.unique(y_dir)) >= 2:
         dir_m_final, mag_m_final = train_models(X, y_dir, y_mag)
         set_models(dir_m_final, mag_m_final)
+        save_model(dir_m_final, "logistic")
 
     def avg(lst):
         return round(sum(lst) / len(lst), 6) if lst else None
