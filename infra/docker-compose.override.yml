@@ -1,0 +1,10 @@
+# Development overrides
+version: "3.9"
+services:
+  backend:
+    environment:
+      LOG_LEVEL: DEBUG
+      DEMO_MODE: "true"
+    volumes:
+      - ./backend:/app
+      - ./model_artifacts:/app/model_artifacts
