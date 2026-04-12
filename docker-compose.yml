@@ -48,8 +48,8 @@ services:
     build: ./frontend
     command: npm run dev
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+      NEXT_PUBLIC_API_URL: https://vigilant-robot-r4j65xgv65wv3p9x6-8000.app.github.dev
+      NEXT_PUBLIC_WS_URL: wss://vigilant-robot-r4j65xgv65wv3p9x6-8000.app.github.dev
     ports:
       - "3000:3000"
     volumes:
