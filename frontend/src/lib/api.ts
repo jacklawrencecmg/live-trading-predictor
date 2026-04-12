@@ -1,8 +1,17 @@
 import axios from "axios";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+function getApiUrl(): string {
+  // Explicit override always wins (set in docker-compose or .env)
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  // In a GitHub Codespace the frontend runs on port 3000 and the backend on
+  // port 8000 under the same subdomain pattern. Swap the port segment.
+  if (typeof window !== "undefined" && window.location.hostname.includes(".app.github.dev")) {
+    return window.location.origin.replace("-3000.", "-8000.");
+  }
+  return "http://localhost:8000";
+}
 
-const api = axios.create({ baseURL: API_URL });
+const api = axios.create({ baseURL: getApiUrl() });
 
 export interface Candle {
   time: number;
