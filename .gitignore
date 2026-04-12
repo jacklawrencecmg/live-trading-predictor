@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+.env
+
+# Node
+node_modules/
+.next/
+.nuxt/
+dist/
+.cache/
+*.tsbuildinfo
+
+# Database
+*.sqlite3
+*.db
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+.docker/
+
+# Secrets
+.env
+.env.local
+.env.*.local
+secrets/
+
+# ML artifacts
+*.pkl
+*.joblib
+*.h5
+*.pt
+model_artifacts/
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Alembic
+alembic/versions/*.pyc
