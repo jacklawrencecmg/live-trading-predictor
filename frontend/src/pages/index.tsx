@@ -8,6 +8,7 @@ import OptionsChainTable from "@/components/OptionsChain/OptionsChainTable";
 import RegimePanel from "@/components/RegimePanel/RegimePanel";
 import PaperTrader from "@/components/PaperTrader/PaperTrader";
 import RiskPanel from "@/components/RiskPanel/RiskPanel";
+import BacktestPanel from "@/components/Backtest/BacktestPanel";
 
 // New institutional panels
 import PredictionPanel from "@/components/Dashboard/PredictionPanel";
@@ -172,10 +173,7 @@ export default function Dashboard() {
             </div>
             <div className="p-2">
               {showBacktest ? (
-                // Lazy-load backtest panel to avoid cluttering the default view
-                <div className="text-zinc-500 text-[11px] p-2">
-                  Backtest panel hidden. Import BacktestPanel to enable.
-                </div>
+                <BacktestPanel symbol={symbol} />
               ) : (
                 <CandlestickChart candles={liveCandles} symbol={symbol} height={320} />
               )}
