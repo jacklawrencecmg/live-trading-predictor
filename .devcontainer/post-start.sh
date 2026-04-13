@@ -1,7 +1,9 @@
 #!/bin/bash
 # Runs on every Codespace start and resume.
-# Starts Redis, the FastAPI backend, and the Next.js frontend.
-WS=/workspaces/options-research
+# Starts Redis, PostgreSQL, the FastAPI backend, and the Next.js frontend.
+
+# Resolve workspace root relative to this script — works for any repo name.
+WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
 echo "[services] Starting Redis..."
@@ -10,13 +12,11 @@ sudo service redis-server start 2>/dev/null \
 sleep 1
 
 # ── PostgreSQL ────────────────────────────────────────────────────────────────
-# The postgres devcontainer feature manages pg as a systemd/init service.
-# It usually starts automatically; this is a safety net.
 echo "[services] Ensuring PostgreSQL is running..."
 sudo service postgresql start 2>/dev/null || true
-# Wait up to 10s for postgres to accept connections
-for i in $(seq 1 10); do
-  pg_isready -U postgres -q && break
+# Wait up to 15s for postgres to accept connections
+for i in $(seq 1 15); do
+  pg_isready -U postgres -q 2>/dev/null && break
   sleep 1
 done
 
@@ -26,7 +26,6 @@ pkill -f "uvicorn app.main" 2>/dev/null || true
 sleep 1
 
 cd "$WS/backend"
-# Settings default to localhost postgres/redis — no extra env vars needed.
 nohup python -m uvicorn app.main:app \
   --host 0.0.0.0 --port 8000 --reload \
   > /tmp/backend.log 2>&1 &

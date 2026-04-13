@@ -2,7 +2,8 @@
 # Runs ONCE when the Codespace is first created.
 # No set -e — each step logs failure but continues.
 
-WS=/workspaces/options-research
+# Resolve workspace root relative to this script — works for any repo name.
+WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 step() { echo ""; echo "=== $* ==="; }
 
