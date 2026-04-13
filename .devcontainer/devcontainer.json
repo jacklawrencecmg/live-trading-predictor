@@ -1,24 +1,19 @@
 {
   "name": "Options Research",
 
-  // Ubuntu base + Python 3.11 + Node 20 + PostgreSQL 16 as devcontainer features.
-  // No Docker-in-Docker needed — services run directly as processes.
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+  // Python 3.11 base (Ubuntu 22.04 / Jammy). Node added via feature.
+  // PostgreSQL and Redis are installed manually in on-create.sh to avoid
+  // the postgres devcontainer feature which fails on many base images.
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
 
   "features": {
-    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" },
-    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
-    "ghcr.io/devcontainers/features/postgres:1": {
-      "version": "16",
-      "postgresPassword": "postgres"
-    }
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" }
   },
 
   // Runs ONCE when the Codespace is first created.
-  // Installs Redis, creates DB, installs Python + Node deps.
   "postCreateCommand": "bash .devcontainer/on-create.sh",
 
-  // Runs on every start/resume — starts Redis, backend, frontend.
+  // Runs on every start/resume — starts Redis, postgres, backend, frontend.
   "postStartCommand": "bash .devcontainer/post-start.sh",
 
   "forwardPorts": [3000, 8000],
