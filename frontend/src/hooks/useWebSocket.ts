@@ -1,6 +1,14 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+// Derive WebSocket base URL from the browser's own origin so this works in
+// Codespaces, tunnels, and production without any env configuration.
+// The /ws/* rewrite in next.config.js proxies the connection to the backend.
+function getWsBase(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window === "undefined") return "ws://localhost:3000";
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}`;
+}
 
 export interface WSMessage {
   type: "quote" | "candle";
@@ -18,7 +26,7 @@ export function useWebSocket(symbol: string, onMessage: (msg: WSMessage) => void
     if (!symbol) return;
 
     const connect = () => {
-      const socket = new WebSocket(`${WS_URL}/ws/market/${symbol}`);
+      const socket = new WebSocket(`${getWsBase()}/ws/market/${symbol}`);
       ws.current = socket;
 
       socket.onopen = () => setConnected(true);
