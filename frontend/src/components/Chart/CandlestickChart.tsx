@@ -20,6 +20,7 @@ export default function CandlestickChart({ candles, symbol, height = 400 }: Prop
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const prevLengthRef = useRef<number>(0);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -103,9 +104,19 @@ export default function CandlestickChart({ candles, symbol, height = 400 }: Prop
       color: c.close >= c.open ? "#3fb95060" : "#f8514960",
     }));
 
-    seriesRef.current.setData(candleData);
-    volSeriesRef.current.setData(volData);
-    chartRef.current?.timeScale().fitContent();
+    const isFullReload = sorted.length !== prevLengthRef.current;
+    prevLengthRef.current = sorted.length;
+
+    if (isFullReload) {
+      seriesRef.current.setData(candleData);
+      volSeriesRef.current.setData(volData);
+      chartRef.current?.timeScale().fitContent();
+    } else {
+      const last = candleData[candleData.length - 1];
+      const lastVol = volData[volData.length - 1];
+      seriesRef.current.update(last);
+      volSeriesRef.current.update(lastVol);
+    }
   }, [candles]);
 
   return (
