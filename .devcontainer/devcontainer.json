@@ -1,19 +1,11 @@
 {
   "name": "Options Research",
 
-  // Python 3.11 base (Ubuntu 22.04 / Jammy). Node added via feature.
-  // PostgreSQL and Redis are installed manually in on-create.sh to avoid
-  // the postgres devcontainer feature which fails on many base images.
-  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  // GitHub's universal Codespace image — pre-installed with Python 3.x,
+  // Node 20, and common tools. No features needed; just apt for Redis/Postgres.
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
 
-  "features": {
-    "ghcr.io/devcontainers/features/node:1": { "version": "20" }
-  },
-
-  // Runs ONCE when the Codespace is first created.
   "postCreateCommand": "bash .devcontainer/on-create.sh",
-
-  // Runs on every start/resume — starts Redis, postgres, backend, frontend.
   "postStartCommand": "bash .devcontainer/post-start.sh",
 
   "forwardPorts": [3000, 8000],
@@ -39,7 +31,5 @@
         "bradlc.vscode-tailwindcss"
       ]
     }
-  },
-
-  "remoteUser": "vscode"
+  }
 }
