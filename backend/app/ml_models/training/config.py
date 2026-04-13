@@ -104,6 +104,14 @@ class TrainingConfig:
     pipeline_version: int = PIPELINE_VERSION
 
     # ---------------------------------------------------------------------------
+    # Label type
+    # ---------------------------------------------------------------------------
+    # "binary"  — y ∈ {0, 1}.  evaluate as-is.
+    # "ternary" — y ∈ {0=DOWN, 1=FLAT, 2=UP}.  binarize to UP-vs-rest for metrics.
+    #             Set embargo_bars = horizon length to prevent label-overlap leakage.
+    label_type: str = "binary"
+
+    # ---------------------------------------------------------------------------
     # Model selection criterion
     # ---------------------------------------------------------------------------
     # Primary: "brier_score" (lower is better) | "log_loss" | "roc_auc" | "balanced_accuracy"

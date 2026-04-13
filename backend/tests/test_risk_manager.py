@@ -1,6 +1,8 @@
 import pytest
 import pytest_asyncio
 
+pytestmark = pytest.mark.risk_critical
+
 
 @pytest.mark.asyncio
 async def test_kill_switch():

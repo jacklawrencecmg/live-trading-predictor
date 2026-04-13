@@ -127,6 +127,16 @@ def _simulate_trades(
     }
 
 
+# Embargo gap between the end of the training window and the start of the test
+# window.  label[i] = sign(close[i+1] - close[i]), so the last training label
+# (at index train_end-1) uses close[train_end].  Without an embargo, the test
+# set starts at train_end, and its first label uses close[train_end+1] — which
+# is clean — but the bar at train_end itself straddles the boundary.  One bar
+# of embargo ensures no single bar contributes to both the training label and
+# the test feature set.  This matches the default in PurgedWalkForwardSplit.
+_EMBARGO_BARS = 1
+
+
 async def run_backtest(req: BacktestRequest, db: AsyncSession) -> BacktestResult:
     import yfinance as yf  # lazy import: only needed at runtime, not test collection
     loop = asyncio.get_event_loop()
@@ -159,9 +169,11 @@ async def run_backtest(req: BacktestRequest, db: AsyncSession) -> BacktestResult
         y_dir_train = y_dir[max(0, train_end - req.train_size): train_end]
         y_mag_train = y_mag[max(0, train_end - req.train_size): train_end]
 
-        X_test = X[train_end:test_end]
-        y_dir_test = y_dir[train_end:test_end]
-        y_mag_test = y_mag[train_end:test_end]
+        # Apply embargo: skip _EMBARGO_BARS rows after train_end to prevent
+        # the boundary bar's label from contaminating the test feature set.
+        X_test = X[train_end + _EMBARGO_BARS:test_end]
+        y_dir_test = y_dir[train_end + _EMBARGO_BARS:test_end]
+        y_mag_test = y_mag[train_end + _EMBARGO_BARS:test_end]
 
         if len(X_train) < 20 or len(X_test) < 5:
             start_idx += step

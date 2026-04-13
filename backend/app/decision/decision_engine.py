@@ -23,7 +23,7 @@ Key design constraints:
 
 import math
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
 
 from app.decision.models import OptionsDecision, StructureCandidate, IVAnalysis
 from app.decision.iv_analysis import compute_iv_analysis
@@ -51,12 +51,13 @@ _PROB_EDGE_WEIGHT: float = 0.45       # how strongly calibrated prob drives scor
 _IV_EDGE_WEIGHT: float = 0.30         # IV environment fit
 _CALIBRATION_WEIGHT: float = 0.25     # calibration health modifier
 
-# Calibration health multipliers (applied to raw composite)
+# Calibration health multipliers (applied to raw composite confidence score)
 _HEALTH_MULTIPLIER: Dict[str, float] = {
-    "good": 1.00,
-    "fair": 0.85,
+    "good":     1.00,
+    "fair":     0.85,
+    "caution":  0.75,
     "degraded": 0.65,
-    "unknown": 0.55,
+    "unknown":  0.55,
 }
 
 
@@ -74,6 +75,7 @@ def build_options_decision(
     liquidity_quality: Optional[str] = None,
     atm_bid_ask_pct: Optional[float] = None,
     chain: Optional[Any] = None,
+    oi_concentrations: Optional[List[float]] = None,
 ) -> OptionsDecision:
     """
     Convert an InferenceResult into a scored OptionsDecision.
@@ -98,6 +100,11 @@ def build_options_decision(
     chain : optional
         Live options chain object. If provided, passed to structure_evaluator for
         actual market price calculations instead of BS approximations.
+    oi_concentrations : list of float or None
+        Strikes carrying heavy open interest (gamma-pinning candidates). When
+        provided, the structure evaluator penalises debit setups whose expected
+        move must pass through a major OI cluster, and rewards credit setups
+        whose short strike sits inside a region of protective OI.
 
     Returns
     -------
@@ -175,6 +182,7 @@ def build_options_decision(
             atm_bid_ask_pct=ba_pct,
             dte=dte_val,
             chain=chain,
+            oi_concentrations=oi_concentrations,
         )
         # Regime suppression overrides all structure viability
         if regime_suppressed:
@@ -273,6 +281,7 @@ def build_options_decision(
         candidates=candidates,
         recommended_structure=recommended_structure,
         recommendation_rationale=recommendation_rationale,
+        oi_concentrations=oi_concentrations,
     )
 
 

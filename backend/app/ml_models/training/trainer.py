@@ -110,6 +110,35 @@ def _build_sklearn_model(name: str, cfg: TrainingConfig):
 
 
 # ---------------------------------------------------------------------------
+# Helpers for binary / ternary evaluation
+# ---------------------------------------------------------------------------
+
+def _get_prob_up(model: Any, X: np.ndarray) -> np.ndarray:
+    """
+    Extract P(UP) from a model's predict_proba output.
+
+    Binary model  (proba shape (n, 2)): return proba[:, 1]
+    Ternary model (proba shape (n, 3)): return proba[:, 2]  (UP = class index 2)
+    """
+    proba = model.predict_proba(X)
+    if proba.shape[1] == 3:
+        return proba[:, 2]
+    return proba[:, 1]
+
+
+def _binarize_for_eval(y: np.ndarray, label_type: str) -> np.ndarray:
+    """
+    Binarize labels for metric computation (always returns {0, 1}).
+
+    binary  → identity
+    ternary → UP-vs-rest: (y == 2).astype(int)
+    """
+    if label_type == "ternary":
+        return (y == 2).astype(int)
+    return y.astype(int)
+
+
+# ---------------------------------------------------------------------------
 # Data structures for results
 # ---------------------------------------------------------------------------
 
@@ -126,6 +155,9 @@ class ModelResult:
     calibration_summary: Optional[dict]                    # ECE + curve
     # The final model trained on all data (None until finalize() is called)
     final_model: Optional[Any] = None
+    # Pooled OOS predictions for artifact saving / offline analysis
+    pooled_oos_y: Optional[np.ndarray] = None         # binarized y_true
+    pooled_oos_prob_up: Optional[np.ndarray] = None   # P(UP) from model
 
     def primary_score(self, metric: str = "brier_score") -> float:
         """Return the mean value of the primary selection metric."""
@@ -140,6 +172,31 @@ class TrainingReport:
     winner: ModelResult
     splitter_description: List[dict]
     feature_names: List[str]
+
+    # ------------------------------------------------------------------
+    # Convenience accessors (tests and downstream consumers use these)
+    # ------------------------------------------------------------------
+
+    @property
+    def brier_score(self) -> Optional[float]:
+        """Winner's mean Brier score across walk-forward folds."""
+        return self.winner.aggregated.brier_score_mean
+
+    @property
+    def metrics(self) -> dict:
+        """Winner's aggregated metrics as a flat dict (JSON-serialisable)."""
+        ag = self.winner.aggregated
+        return {
+            "brier_score": ag.brier_score_mean,
+            "brier_score_std": ag.brier_score_std,
+            "log_loss": ag.log_loss_mean,
+            "log_loss_std": ag.log_loss_std,
+            "roc_auc": ag.roc_auc_mean,
+            "balanced_accuracy": ag.balanced_accuracy_mean,
+            "ece": ag.ece_mean,
+            "n_folds": ag.n_folds,
+            "total_test_samples": ag.total_test_samples,
+        }
 
     def to_summary_dict(self) -> dict:
         return {
@@ -246,12 +303,13 @@ def train_all_models(
                 logger.warning("Fold %d: failed to fit %s: %s", fi.fold, name, e)
                 continue
 
-            prob_up = model.predict_proba(X_te)[:, 1]
-            fm = compute_fold_metrics(fi.fold, len(fi.train_idx), y_te, prob_up)
+            prob_up = _get_prob_up(model, X_te)
+            y_eval = _binarize_for_eval(y_te, cfg.label_type)
+            fm = compute_fold_metrics(fi.fold, len(fi.train_idx), y_eval, prob_up)
             model_fold_metrics[name].append(fm)
 
-            # Accumulate pooled predictions
-            pooled[name]["y"].append(y_te)
+            # Accumulate pooled predictions (store binarized y for consistent evaluation)
+            pooled[name]["y"].append(y_eval)
             pooled[name]["prob_up"].append(prob_up)
             if ret_te is not None:
                 pooled[name]["returns"].append(ret_te)
@@ -354,6 +412,8 @@ def train_all_models(
             ablation=ablation_results,
             calibration_summary=cal_summary,
             final_model=None,
+            pooled_oos_y=y_pool,
+            pooled_oos_prob_up=p_pool,
         ))
 
     # -----------------------------------------------------------------------

@@ -158,9 +158,11 @@ class ConfidenceTracker:
         self,
         window: int = DEFAULT_WINDOW,
         tracker_dir: Path = TRACKER_DIR,
+        storage_dir: Optional[Path] = None,   # alias for tracker_dir
     ):
         self._window = window
-        self._dir = tracker_dir
+        # storage_dir is an alias for tracker_dir; storage_dir takes precedence when both provided
+        self._dir = Path(storage_dir) if storage_dir is not None else tracker_dir
         self._states: Dict[str, _SymbolState] = {}
         self._lock = threading.Lock()
 
@@ -230,16 +232,20 @@ class ConfidenceTracker:
 
         bins, mean_preds, frac_poss = _reliability_diagram(state.probs, state.outcomes)
 
-        # Calibration health
+        # Calibration health — four states after "unknown" cleared by window check above:
+        #   good:    rolling performance at or near training baseline, low ECE
+        #   fair:    modest Brier increase or slightly elevated ECE — tradeable with penalty
+        #   caution: notable drift; signal still usable but degradation factor applied
+        #   degraded: severe drift; hard-abstain threshold may trigger
         ratio = rb / (state.baseline_brier + 1e-9)
         if ratio <= 1.1 and ece <= 0.05:
             health = "good"
         elif ratio <= 1.3 or ece <= 0.10:
             health = "fair"
-        elif ratio > 1.3:
-            health = "degraded"
+        elif ratio <= 1.6 or ece <= 0.15:
+            health = "caution"
         else:
-            health = "unknown"
+            health = "degraded"
 
         # Retraining trigger: fire when degradation is severe AND we have enough data
         needs_retrain = False
@@ -270,6 +276,22 @@ class ConfidenceTracker:
             needs_retrain=needs_retrain,
             retrain_reason=retrain_reason,
         )
+
+    def record_inference(
+        self,
+        symbol: str,
+        calibrated_prob: float,
+        actual_outcome: int,
+        baseline_brier: Optional[float] = None,
+    ) -> None:
+        """
+        Alias for record(). Preferred name at inference callsites.
+
+        Records a resolved prediction outcome for the rolling calibration window.
+        Call this when an outcome (price went up/down) becomes known for a bar
+        on which inference was previously run.
+        """
+        self.record(symbol, calibrated_prob, actual_outcome, baseline_brier)
 
     def set_baseline_brier(self, symbol: str, baseline_brier: float) -> None:
         """Update the training baseline for a symbol (called after model promotion)."""

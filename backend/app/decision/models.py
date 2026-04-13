@@ -159,6 +159,11 @@ class OptionsDecision:
     recommended_structure: Optional[str]   # None if abstain
     recommendation_rationale: str
 
+    # ─── OI context (optional) ───────────────────────────────────────────────
+    # Strikes with heavy open interest provided to the evaluator.
+    # Heavy OI creates gamma-pinning pressure; included here for audit/display.
+    oi_concentrations: Optional[List[float]] = None
+
     def to_dict(self) -> dict:
         d = asdict(self)
         return d

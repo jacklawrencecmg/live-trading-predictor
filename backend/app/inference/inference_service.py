@@ -134,6 +134,14 @@ class InferenceResult:
         return d
 
 
+# Maximum age (seconds) of an options snapshot before inference falls back to
+# sentinel values.  5 minutes matches one 5-minute bar interval and is the
+# tightest useful threshold for intraday options features.
+# Previously this was 3600.0 (1 hour), which is far too permissive: a
+# 60-minute-old options snapshot spans 12 completed bars and can reflect a
+# completely different market state.
+_MAX_CHAIN_STALENESS = 300.0
+
 _loaded_model = None
 _magnitude_model = None
 _calibration_map: CalibrationMap = CalibrationMap.identity()
@@ -193,7 +201,6 @@ def run_inference(
     _options_stale = False
     if options_features:
         staleness = float(options_features.get("staleness_seconds", 0.0) or 0.0)
-        _MAX_CHAIN_STALENESS = 3600.0
         if staleness > _MAX_CHAIN_STALENESS:
             logger.warning(
                 "options_features for %s are stale (%.0fs > %.0fs) — using sentinel values",

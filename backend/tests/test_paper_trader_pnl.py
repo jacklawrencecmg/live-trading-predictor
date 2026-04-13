@@ -15,6 +15,8 @@ We validate:
 import pytest
 from unittest.mock import AsyncMock
 
+pytestmark = pytest.mark.risk_critical
+
 
 def make_trade_req(action: str, qty: int = 10, price: float = 100.0, symbol: str = "SPY"):
     """Build a TradeCreate without importing paper_trader at module level."""

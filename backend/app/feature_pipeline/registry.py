@@ -24,7 +24,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-PIPELINE_VERSION: int = 1  # global bump triggers full re-compute of all stored rows
+PIPELINE_VERSION: int = 2  # global bump triggers full re-compute of all stored rows
 
 # Maximum consecutive bars over which ffill() propagates NaN values.
 # One full 5-minute trading session = 78 bars (6.5 h × 12 bars/h).
@@ -387,6 +387,105 @@ _RAW: List[FeatureDef] = [
         expected_min=0.0, expected_max=1.0,
         null_strategy="required",
     ),
+
+    # -----------------------------------------------------------------------
+    # MEAN REVERSION: EMA-distance and fast z-score
+    # Distinct from the momentum group: these capture deviation from slow
+    # trend anchors rather than raw directional returns.
+    # -----------------------------------------------------------------------
+    FeatureDef(
+        name="ema_dist_20", version=1, group="mean_reversion",
+        description="Signed distance of prior close from its 20-bar EMA, pct-normalised",
+        formula="(close[i-1] - EMA(close, 20)[i-1]) / (close[i-1] + eps)",
+        units="dimensionless pct; positive = above EMA20",
+        expected_min=-0.05, expected_max=0.05,
+        null_strategy="required",
+    ),
+    FeatureDef(
+        name="ema_dist_50", version=1, group="mean_reversion",
+        description="Signed distance of prior close from its 50-bar EMA, pct-normalised",
+        formula="(close[i-1] - EMA(close, 50)[i-1]) / (close[i-1] + eps)",
+        units="dimensionless pct; positive = above EMA50",
+        expected_min=-0.1, expected_max=0.1,
+        null_strategy="required",
+    ),
+    FeatureDef(
+        name="zscore_5", version=1, group="mean_reversion",
+        description="5-bar z-score of close — fast mean-reversion oscillator",
+        formula="(close[i-1] - mean(close[i-6..i-1])) / (std(close[i-6..i-1]) + eps)",
+        units="standard deviations",
+        expected_min=-4.0, expected_max=4.0,
+        null_strategy="required",
+    ),
+
+    # -----------------------------------------------------------------------
+    # BAR STRUCTURE: candlestick anatomy of the prior bar
+    # These use OHLC of bar i-1 to capture intrabar price structure:
+    # body size, wick rejection strength, intrabar direction, and gap size.
+    # All values reference bar i-1 exclusively (shift-by-1 invariant holds).
+    # -----------------------------------------------------------------------
+    FeatureDef(
+        name="body_ratio", version=1, group="bar_structure",
+        description="Body of prior bar as fraction of total range; 0 = doji, 1 = full body",
+        formula="|close[i-1] - open[i-1]| / (high[i-1] - low[i-1] + eps)",
+        units="dimensionless [0, 1]",
+        expected_min=0.0, expected_max=1.0,
+        null_strategy="required",
+    ),
+    FeatureDef(
+        name="upper_wick_ratio", version=1, group="bar_structure",
+        description="Upper wick of prior bar as fraction of total range — seller rejection above",
+        formula="(high[i-1] - max(close[i-1], open[i-1])) / (high[i-1] - low[i-1] + eps)",
+        units="dimensionless [0, 1]",
+        expected_min=0.0, expected_max=1.0,
+        null_strategy="required",
+    ),
+    FeatureDef(
+        name="lower_wick_ratio", version=1, group="bar_structure",
+        description="Lower wick of prior bar as fraction of total range — buyer rejection below",
+        formula="(min(close[i-1], open[i-1]) - low[i-1]) / (high[i-1] - low[i-1] + eps)",
+        units="dimensionless [0, 1]",
+        expected_min=0.0, expected_max=1.0,
+        null_strategy="required",
+    ),
+    FeatureDef(
+        name="bar_return", version=1, group="bar_structure",
+        description="Intrabar return of prior bar: open-to-close pct change",
+        formula="close[i-1] / (open[i-1] + eps) - 1",
+        units="pct return; positive = bullish bar",
+        expected_min=-0.05, expected_max=0.05,
+        null_strategy="required",
+    ),
+    FeatureDef(
+        name="gap_pct", version=1, group="bar_structure",
+        description="Gap at open of prior bar relative to the bar before it",
+        formula="open[i-1] / (close[i-2] + eps) - 1",
+        units="pct gap; positive = gap-up open",
+        expected_min=-0.03, expected_max=0.03,
+        null_strategy="required",
+    ),
+
+    # -----------------------------------------------------------------------
+    # REGIME: trend-direction binary signals derived from EMA relationships
+    # These complement vol_regime (ratio of short/long realized vol) with
+    # price-trend regime indicators.
+    # -----------------------------------------------------------------------
+    FeatureDef(
+        name="price_above_ema20", version=1, group="regime",
+        description="1 when prior close is above its 20-bar EMA; 0 otherwise",
+        formula="1 if close[i-1] > EMA(close, 20)[i-1] else 0",
+        units="binary {0, 1}",
+        expected_min=0.0, expected_max=1.0,
+        null_strategy="required",
+    ),
+    FeatureDef(
+        name="ma_alignment", version=1, group="regime",
+        description="1 when EMA20 > EMA50 (bullish MA alignment); 0 otherwise",
+        formula="1 if EMA(close, 20)[i-1] > EMA(close, 50)[i-1] else 0",
+        units="binary {0, 1}",
+        expected_min=0.0, expected_max=1.0,
+        null_strategy="required",
+    ),
 ]
 
 # Build the registry dict keyed by feature name
@@ -411,19 +510,27 @@ FEATURE_COLS: List[str] = [
     "atr_norm",
     "realized_vol_5", "realized_vol_10", "realized_vol_20",
     "vol_regime",
-    # momentum / reversion
+    # momentum (directional returns)
     "ret_1", "ret_5", "ret_10", "ret_20", "ret_60",
     "zscore_20",
+    # mean reversion (EMA-distance and fast z-score)
+    "ema_dist_20", "ema_dist_50",
+    "zscore_5",
     # vwap
     "vwap_distance",
     "vwap_slope",
     # volume
     "volume_ratio", "volume_trend", "volume_zscore",
-    # seasonality
+    # intraday seasonality
     "hour_sin", "hour_cos",
     "minute_sin", "minute_cos",
     "session_progress",
     "is_first_30min", "is_last_30min",
+    # bar structure (candlestick anatomy of the prior bar)
+    "body_ratio", "upper_wick_ratio", "lower_wick_ratio",
+    "bar_return", "gap_pct",
+    # regime (trend-direction binary signals)
+    "price_above_ema20", "ma_alignment",
     # options missingness indicator (always present, informs model when options absent)
     "is_null_options",
 ]

@@ -24,6 +24,17 @@ from app.feature_pipeline.registry import (
     PIPELINE_VERSION,
     REGISTRY,
 )
+
+# re-export for callers that only import from store
+__all__ = [
+    "save_feature_row",
+    "save_feature_batch",
+    "load_feature_row",
+    "load_feature_range_pit",
+    "deserialize_features",
+    "to_feature_series",
+    "rows_to_dataframe",
+]
 from app.models.feature_row import FeatureRow
 
 logger = logging.getLogger(__name__)
@@ -154,3 +165,103 @@ def deserialize_features(row: FeatureRow) -> dict:
 def to_feature_series(row: FeatureRow) -> pd.Series:
     """Return feature values as a pandas Series indexed by feature name."""
     return pd.Series(deserialize_features(row))
+
+
+async def save_feature_batch(
+    symbol: str,
+    timeframe: str,
+    feat_df: pd.DataFrame,
+    db: AsyncSession,
+) -> int:
+    """
+    Persist a full feature matrix to the database.
+
+    feat_df: result of compute_features() — one row per bar, indexed from 0.
+    Must contain a 'bar_open_time' column.
+
+    Rows with no valid bar_open_time or where is_valid==False are still saved
+    (callers can filter with is_valid later); this preserves the null-mask
+    information for diagnostics.
+
+    Returns the number of rows written/updated.
+    """
+    if "bar_open_time" not in feat_df.columns:
+        raise ValueError("feat_df must contain a 'bar_open_time' column")
+
+    count = 0
+    for _, row in feat_df.iterrows():
+        bot = row["bar_open_time"]
+        if bot is None or (isinstance(bot, float) and np.isnan(bot)):
+            continue
+        bar_time = pd.Timestamp(bot).to_pydatetime()
+        await save_feature_row(symbol, timeframe, bar_time, row, db)
+        count += 1
+    return count
+
+
+async def load_feature_range_pit(
+    symbol: str,
+    timeframe: str,
+    start_utc: datetime,
+    end_utc: datetime,
+    db: AsyncSession,
+    require_current_manifest: bool = True,
+    valid_only: bool = True,
+) -> List[FeatureRow]:
+    """
+    Load feature rows for a symbol between start_utc and end_utc (inclusive).
+
+    Point-in-time correct: only rows whose bar_open_time ∈ [start_utc, end_utc]
+    are returned.  No future-bar contamination is possible because features are
+    computed from bars strictly before bar_open_time (shift-by-1 invariant).
+
+    Parameters
+    ----------
+    require_current_manifest
+        When True (default), only rows with the current MANIFEST_HASH are
+        returned.  Stale rows (computed under an old formula version) are
+        excluded.  Set False only for diagnostic/replay purposes.
+    valid_only
+        When True (default), only rows where is_valid=True are returned.
+        Invalid rows (warmup NaN, missing Greeks) are excluded from training.
+
+    Returns
+    -------
+    List[FeatureRow] sorted by bar_open_time ascending.
+    """
+    stmt = select(FeatureRow).where(
+        FeatureRow.symbol == symbol,
+        FeatureRow.timeframe == timeframe,
+        FeatureRow.bar_open_time >= start_utc,
+        FeatureRow.bar_open_time <= end_utc,
+    )
+    if require_current_manifest:
+        stmt = stmt.where(FeatureRow.manifest_hash == MANIFEST_HASH)
+    if valid_only:
+        stmt = stmt.where(FeatureRow.is_valid == True)  # noqa: E712
+    stmt = stmt.order_by(FeatureRow.bar_open_time.asc())
+
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+def rows_to_dataframe(rows: List[FeatureRow]) -> pd.DataFrame:
+    """
+    Convert a list of FeatureRow objects into a pandas DataFrame.
+
+    Returns a DataFrame indexed by bar_open_time with columns = ALL_FEATURE_COLS.
+    Useful for assembling a training matrix from persisted feature rows.
+    """
+    if not rows:
+        return pd.DataFrame(columns=["bar_open_time"] + ALL_FEATURE_COLS)
+
+    records = []
+    for row in rows:
+        feats = deserialize_features(row)
+        feats["bar_open_time"] = row.bar_open_time
+        records.append(feats)
+
+    df = pd.DataFrame(records)
+    df["bar_open_time"] = pd.to_datetime(df["bar_open_time"])
+    df = df.sort_values("bar_open_time").reset_index(drop=True)
+    return df

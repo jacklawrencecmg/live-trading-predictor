@@ -3,6 +3,8 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.schemas.trade import TradeCreate
 
+pytestmark = pytest.mark.risk_critical
+
 
 @pytest.mark.asyncio
 async def test_execute_paper_trade(db_session):

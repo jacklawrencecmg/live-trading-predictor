@@ -39,6 +39,20 @@ sys.modules.setdefault("redis.asyncio", _redis_async_stub)
 _asyncpg_stub = types.ModuleType("asyncpg")
 sys.modules.setdefault("asyncpg", _asyncpg_stub)
 
+from sqlalchemy import BigInteger
+from sqlalchemy.ext.compiler import compiles
+
+# ---------------------------------------------------------------------------
+# Make BigInteger render as INTEGER for SQLite so that primary-key
+# autoincrement works correctly.  PostgreSQL uses BIGINT as normal.
+# Without this, BigInteger PKs in SQLite produce
+# "NOT NULL constraint failed: <table>.id" because SQLite only
+# auto-generates ROWID aliases for columns declared as INTEGER.
+# ---------------------------------------------------------------------------
+@compiles(BigInteger, "sqlite")
+def _sqlite_bigint(type_, compiler, **kw):
+    return "INTEGER"
+
 from app.core.database import Base
 import app.models  # noqa: F401 — registers all models with Base.metadata
 

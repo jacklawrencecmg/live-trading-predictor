@@ -239,6 +239,107 @@ def _compute_seasonality(df: pd.DataFrame) -> Dict[str, pd.Series]:
     }
 
 
+def _compute_mean_reversion(c1: pd.Series) -> Dict[str, pd.Series]:
+    """
+    Mean-reversion features: EMA-distance and fast z-score.
+
+    c1: close.shift(1) with ffill(limit=FFILL_LIMIT) already applied.
+
+    These measure how far the prior close has stretched from its slow-moving
+    anchors (EMA20, EMA50) and how extreme it is relative to its recent
+    5-bar distribution.  Distinct from the momentum returns (which measure
+    direction/speed): these measure *overextension*.
+    """
+    ema20 = _ema(c1, 20)
+    ema50 = _ema(c1, 50)
+
+    ema_dist_20 = (c1 - ema20) / (c1 + 1e-9)
+    ema_dist_50 = (c1 - ema50) / (c1 + 1e-9)
+
+    roll5_mean = c1.rolling(5).mean()
+    roll5_std = c1.rolling(5).std()
+    zscore5 = (c1 - roll5_mean) / (roll5_std + 1e-9)
+
+    return {
+        "ema_dist_20": ema_dist_20,
+        "ema_dist_50": ema_dist_50,
+        "zscore_5": zscore5,
+    }
+
+
+def _compute_bar_structure(df_sh: pd.DataFrame) -> Dict[str, pd.Series]:
+    """
+    Candlestick anatomy of the prior bar.
+
+    df_sh: df.shift(1).ffill(limit=FFILL_LIMIT) — OHLCV of bar i-1 at row i.
+
+    body_ratio      : |close-open| / range — 0=doji, 1=full-body candle
+    upper_wick_ratio: upper shadow / range — seller rejection above
+    lower_wick_ratio: lower shadow / range — buyer support below
+    bar_return      : close/open - 1       — intrabar direction
+    gap_pct         : open[i-1]/close[i-2] - 1  — gap from prior close
+
+    Body + upper_wick + lower_wick sum to 1.0 for any non-doji bar.
+    All ratio features are clipped to [0, 1] to handle float precision noise.
+    """
+    o1 = df_sh["open"]
+    h1 = df_sh["high"]
+    l1 = df_sh["low"]
+    c1 = df_sh["close"]
+    c2 = c1.shift(1)        # close[i-2] — for gap_pct
+
+    bar_range = (h1 - l1).clip(lower=0)
+    eps = 1e-9
+
+    body = (c1 - o1).abs()
+    body_ratio = (body / (bar_range + eps)).clip(0.0, 1.0)
+
+    body_top = pd.concat([c1, o1], axis=1).max(axis=1)
+    body_bot = pd.concat([c1, o1], axis=1).min(axis=1)
+
+    upper_wick = (h1 - body_top).clip(lower=0)
+    lower_wick = (body_bot - l1).clip(lower=0)
+
+    upper_wick_ratio = (upper_wick / (bar_range + eps)).clip(0.0, 1.0)
+    lower_wick_ratio = (lower_wick / (bar_range + eps)).clip(0.0, 1.0)
+
+    bar_return = (c1 / (o1 + eps)) - 1
+    gap_pct = (o1 / (c2 + eps)) - 1
+
+    return {
+        "body_ratio": body_ratio,
+        "upper_wick_ratio": upper_wick_ratio,
+        "lower_wick_ratio": lower_wick_ratio,
+        "bar_return": bar_return,
+        "gap_pct": gap_pct,
+    }
+
+
+def _compute_regime(c1: pd.Series) -> Dict[str, pd.Series]:
+    """
+    Trend-direction regime indicators.
+
+    c1: close.shift(1) with ffill(limit=FFILL_LIMIT) already applied.
+
+    price_above_ema20 : 1 when close[i-1] > EMA(close,20)[i-1]
+    ma_alignment      : 1 when EMA20 > EMA50 (bullish MA stack)
+
+    These are binary signals intended to condition other features and to let
+    the model learn regime-specific weight adjustments without requiring a
+    separate regime-model input.
+    """
+    ema20 = _ema(c1, 20)
+    ema50 = _ema(c1, 50)
+
+    price_above_ema20 = (c1 > ema20).astype(float)
+    ma_alignment = (ema20 > ema50).astype(float)
+
+    return {
+        "price_above_ema20": price_above_ema20,
+        "ma_alignment": ma_alignment,
+    }
+
+
 def _compute_options(
     options_data: Optional[Dict[str, Any]],
     n_rows: int,
@@ -331,9 +432,12 @@ def compute_features(
     trend = _compute_trend(c1)
     vol = _compute_volatility(c1, df_shifted_filled)
     mom = _compute_momentum(c1)
+    mean_rev = _compute_mean_reversion(c1)
     vwap = _compute_vwap(df, c1)
     volume = _compute_volume(df)
     season = _compute_seasonality(df)
+    bar_struct = _compute_bar_structure(df_shifted_filled)
+    regime = _compute_regime(c1)
     options = _compute_options(options_data, n)
 
     # ------------------------------------------------------------------
@@ -344,9 +448,12 @@ def compute_features(
         **trend,
         **vol,
         **mom,
+        **mean_rev,
         **vwap,
         **volume,
         **season,
+        **bar_struct,
+        **regime,
         **options,
     }
     feat_df = pd.DataFrame(parts)

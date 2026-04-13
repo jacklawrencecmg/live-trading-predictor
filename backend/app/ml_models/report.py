@@ -16,7 +16,7 @@ Report structure:
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Optional
 
 from app.ml_models.training.trainer import TrainingReport, ModelResult
 
@@ -438,3 +438,109 @@ def generate_report(report: TrainingReport) -> str:
         _section_selection_rationale(report),
     ]
     return "\n".join(sections)
+
+
+def generate_multi_horizon_report(reports: Dict[int, "TrainingReport"]) -> str:
+    """
+    Generate a consolidated multi-horizon markdown report.
+
+    Produces a single document comparing winners and model performance across
+    all trained horizons.  Per-horizon detailed reports are in sub-directories.
+
+    Parameters
+    ----------
+    reports : dict[int, TrainingReport]
+        Mapping of horizon → TrainingReport, as returned by
+        ``run_multi_horizon_pipeline()``.
+    """
+    horizons = sorted(reports.keys())
+    lines = [
+        "# Multi-Horizon Training Report",
+        "",
+        f"**Generated:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}  ",
+        f"**Horizons evaluated:** {', '.join(f'h={h}' for h in horizons)}  ",
+        f"**Label type:** ternary (DOWN=0 / FLAT=1 / UP=2), evaluated as UP-vs-rest  ",
+        "",
+        "---",
+        "",
+        "## Winner Summary",
+        "",
+    ]
+
+    # Winner table
+    w_headers = [
+        "Horizon", "Winner", "Type", "Brier ↓ (mean ± std)",
+        "AUC ↑", "BalAcc ↑", "ECE ↓", "Embargo bars", "Test N"
+    ]
+    w_rows = []
+    for h in horizons:
+        r = reports[h]
+        w = r.winner
+        ag = w.aggregated
+        kind = "baseline" if w.is_baseline else "parametric"
+        w_rows.append([
+            f"h={h}",
+            f"`{w.model_name}`",
+            kind,
+            f"{_fmt(ag.brier_score_mean)} ± {_fmt(ag.brier_score_std)}",
+            _fmt(ag.roc_auc_mean),
+            _fmt(ag.balanced_accuracy_mean),
+            _fmt(ag.ece_mean),
+            r.config.embargo_bars,
+            f"{ag.total_test_samples:,}",
+        ])
+    lines.append(_table(w_headers, w_rows))
+    lines.append("")
+
+    # Per-horizon model comparison
+    lines.append("---")
+    lines.append("")
+    lines.append("## Per-Horizon Model Comparison")
+    lines.append("")
+    lines.append(
+        "> Each sub-table shows all models for that horizon, sorted by Brier score. "
+        "Baselines appear first. Brier = 0.25 = coin-flip. "
+        "See `h{N}/training_report.md` for full per-horizon details."
+    )
+    lines.append("")
+
+    for h in horizons:
+        r = reports[h]
+        lines.append(f"### Horizon h={h}  (embargo={r.config.embargo_bars} bar(s))")
+        lines.append("")
+        lines.append(_section_model_comparison(r).split("\n", 3)[-1])  # strip heading
+
+    # Best-model-beats-baseline summary per horizon
+    lines.append("---")
+    lines.append("")
+    lines.append("## Baseline Beat Summary")
+    lines.append("")
+    bb_headers = ["Horizon", "Winner Brier", "Best Baseline Brier", "Margin", "Beats baseline?"]
+    bb_rows = []
+    for h in horizons:
+        r = reports[h]
+        w = r.winner
+        baselines = [res for res in r.model_results if res.is_baseline]
+        best_bl = (
+            min(b.aggregated.brier_score_mean for b in baselines)
+            if baselines else None
+        )
+        if best_bl is not None:
+            margin = best_bl - w.aggregated.brier_score_mean
+            beats = "Yes ✓" if margin > 0 else "No ✗"
+            bb_rows.append([
+                f"h={h}",
+                _fmt(w.aggregated.brier_score_mean),
+                _fmt(best_bl),
+                _fmt(margin),
+                beats,
+            ])
+    lines.append(_table(bb_headers, bb_rows))
+    lines.append("")
+    lines.append(
+        "> A positive margin means the winner beat the best naive baseline. "
+        "A model that cannot beat its baselines on Brier score has no predictive value."
+    )
+    lines.append("")
+
+    return "\n".join(lines)

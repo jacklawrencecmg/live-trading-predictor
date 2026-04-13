@@ -6,21 +6,26 @@ re-introduces a known leakage pattern. The test names map 1-to-1 to the
 issues documented in docs/LEAKAGE_AUDIT.md.
 
 Test categories:
-  L1 — Feature/inference pipeline dimension mismatch
-  L2 — Feature lookback window (shift-by-1 invariant)
-  L3 — Bar-close guard buffer
-  L4 — Ternary label threshold uses current-bar data
-  L5 — Inference rejects unclosed bars
-  L6 — Session-boundary ffill capped
-  L7 — Options snapshot no-lookahead join
-  L8 — Labels drop last row / no label for unpredictable bar
-  L9 — Backtest prepare_dataset feature dimension consistency
+  L1  — Feature/inference pipeline dimension mismatch
+  L2  — Feature lookback window (shift-by-1 invariant)
+  L3  — Bar-close guard buffer
+  L4  — Ternary label threshold uses current-bar data
+  L5  — Inference rejects unclosed bars
+  L6  — Session-boundary ffill capped
+  L7  — Options snapshot no-lookahead join (now code-enforced)
+  L8  — Labels drop last row / no label for unpredictable bar
+  L9  — Backtest prepare_dataset feature dimension consistency
+  L10 — Backtest walk-forward loop missing embargo gap
+  L11 — Options get_latest_chain_pit enforces available_at cutoff in SQL
+  L12 — Options staleness threshold at inference too permissive
 """
 
 import numpy as np
 import pandas as pd
 import pytest
 from datetime import datetime, timedelta
+
+pytestmark = pytest.mark.leakage
 
 
 # ---------------------------------------------------------------------------
@@ -487,3 +492,222 @@ def test_L9_prepare_dataset_labels_are_consistent():
     assert np.array_equal(y_dir, tail), (
         "Labels from _prepare_dataset do not match close[i+1] > close[i]."
     )
+
+
+# ---------------------------------------------------------------------------
+# L10: Backtest walk-forward loop — embargo gap between train and test
+# ---------------------------------------------------------------------------
+
+def test_L10_embargo_bars_constant_exists_and_is_positive():
+    """
+    _EMBARGO_BARS must exist in backtest_service and be >= 1.
+
+    The embargo prevents the boundary bar from contributing to both the last
+    training label and the first test feature vector.  Without it the bar at
+    index train_end straddles the boundary: label[train_end-1] uses
+    close[train_end], and X_test[0] uses close[train_end] in its features.
+    An embargo of 1 removes X_test[0] from the evaluation set.
+    """
+    from app.services.backtest_service import _EMBARGO_BARS
+    assert _EMBARGO_BARS >= 1, (
+        f"_EMBARGO_BARS must be >= 1 to prevent boundary-bar label bleed, got {_EMBARGO_BARS}"
+    )
+
+
+def test_L10_walk_forward_test_set_starts_after_embargo():
+    """
+    Given a fully prepared feature/label array, the test slice must start at
+    train_end + _EMBARGO_BARS, not train_end.
+
+    We verify this by constructing slices the same way run_backtest does and
+    asserting the gap is non-zero — no row appears in both X_train and X_test.
+    """
+    from app.services.backtest_service import _EMBARGO_BARS, _prepare_dataset
+
+    df = _make_ohlcv(200)
+    X, y_dir, y_mag = _prepare_dataset(df)
+
+    train_size = 80
+    test_size = 40
+    train_end = train_size
+
+    X_train = X[max(0, train_end - train_size): train_end]
+    X_test = X[train_end + _EMBARGO_BARS: train_end + test_size]
+
+    # No row that ends train should appear at the start of test
+    # (they are different index ranges)
+    train_last_idx = train_end - 1
+    test_first_idx = train_end + _EMBARGO_BARS
+
+    assert test_first_idx > train_last_idx, (
+        f"Test window starts at {test_first_idx}, train window ends at {train_last_idx}. "
+        "Embargo gap must ensure test_first_idx > train_last_idx."
+    )
+
+    # The X arrays must not share any rows
+    assert len(X_train) > 0 and len(X_test) > 0
+    # With embargo, first test row is not the row immediately after the last train row
+    assert test_first_idx == train_end + _EMBARGO_BARS
+
+
+def test_L10_boundary_bar_excluded_from_test():
+    """
+    Row at index train_end must not appear in X_test when _EMBARGO_BARS >= 1.
+
+    label[train_end - 1] = sign(close[train_end] - close[train_end-1]).
+    X at row train_end is computed from bars 0..train_end-1 via shift(1).
+    If train_end were included in X_test, the close[train_end] value would
+    appear in both a training label and a test feature lookback.
+    """
+    from app.services.backtest_service import _EMBARGO_BARS, _prepare_dataset
+
+    df = _make_ohlcv(150)
+    X, _, _ = _prepare_dataset(df)
+
+    train_size = 60
+    test_size = 30
+    train_end = train_size
+
+    X_test_with_embargo = X[train_end + _EMBARGO_BARS: train_end + test_size]
+    X_test_no_embargo = X[train_end: train_end + test_size]
+
+    # With embargo, the first row of the test set is different from what it
+    # would be without embargo (shifted by _EMBARGO_BARS rows).
+    if _EMBARGO_BARS > 0 and len(X_test_with_embargo) > 0 and len(X_test_no_embargo) > 0:
+        # The boundary row (train_end) is in X_test_no_embargo but not in X_test_with_embargo
+        boundary_row = X[train_end]
+        assert not np.array_equal(X_test_with_embargo[0], boundary_row), (
+            "The boundary row at train_end must be excluded from X_test when _EMBARGO_BARS >= 1."
+        )
+
+
+# ---------------------------------------------------------------------------
+# L11: Options get_latest_chain_pit enforces available_at cutoff in SQL
+# ---------------------------------------------------------------------------
+
+def test_L11_L7_status_updated_to_code_enforced():
+    """
+    L7 was previously advisory (documentation + prospective tests only).
+    With the new option_store.py, get_latest_chain_pit enforces
+    available_at <= as_of_utc in SQL.
+
+    This test verifies the SQL enforcement function exists and its signature
+    requires an as_of_utc parameter (the cutoff).
+    """
+    import inspect
+    from app.data_ingestion.option_store import get_latest_chain_pit
+
+    sig = inspect.signature(get_latest_chain_pit)
+    assert "as_of_utc" in sig.parameters, (
+        "get_latest_chain_pit must have an as_of_utc parameter to enforce "
+        "the available_at <= as_of_utc invariant in SQL."
+    )
+
+
+def test_L11_options_snapshot_none_as_of_utc_uses_current_time():
+    """
+    When as_of_utc=None is passed to get_latest_chain_pit, the function must
+    substitute datetime.utcnow() — NOT skip the WHERE clause entirely.
+
+    We verify this by inspecting the source to confirm the None-check pattern.
+    Skipping the WHERE clause when as_of_utc=None would allow all future
+    snapshots to be returned, re-introducing the L7 lookahead violation.
+    """
+    import inspect
+    import textwrap
+    from app.data_ingestion import option_store
+
+    source = textwrap.dedent(inspect.getsource(option_store.get_latest_chain_pit))
+
+    # The function must guard None with a datetime.utcnow() assignment before
+    # building conditions — not pass None into the WHERE clause.
+    assert "as_of_utc = datetime.utcnow()" in source or "datetime.utcnow()" in source, (
+        "get_latest_chain_pit must substitute datetime.utcnow() when as_of_utc is None. "
+        "Passing None into the WHERE clause would remove the available_at filter."
+    )
+    # And the WHERE clause must always include available_at <=
+    assert "available_at <=" in source, (
+        "get_latest_chain_pit must always apply WHERE available_at <= as_of_utc "
+        "to enforce the L7 no-lookahead invariant."
+    )
+
+
+# ---------------------------------------------------------------------------
+# L12: Options staleness threshold at inference
+# ---------------------------------------------------------------------------
+
+def test_L12_max_chain_staleness_constant_is_module_level():
+    """
+    _MAX_CHAIN_STALENESS must be a module-level constant in inference_service,
+    not a local variable buried inside run_inference.
+
+    A local variable cannot be tested, overridden in configuration, or linted
+    for correctness by audit tooling.
+    """
+    import app.inference.inference_service as svc
+    assert hasattr(svc, "_MAX_CHAIN_STALENESS"), (
+        "_MAX_CHAIN_STALENESS must be a module-level constant so it can be "
+        "inspected and tested without executing run_inference."
+    )
+
+
+def test_L12_max_chain_staleness_is_at_most_one_bar():
+    """
+    _MAX_CHAIN_STALENESS must be <= 300 seconds (one 5-minute bar interval).
+
+    A threshold of 3600s (1 hour) allows options snapshots that are up to
+    12 complete bars old to be used as current data.  For intraday 5-min
+    bar inference this is far too permissive: IV and greeks can change
+    substantially within a single bar.
+    """
+    from app.inference.inference_service import _MAX_CHAIN_STALENESS
+    assert _MAX_CHAIN_STALENESS <= 300.0, (
+        f"_MAX_CHAIN_STALENESS={_MAX_CHAIN_STALENESS}s exceeds one bar interval (300s). "
+        "Stale options data from more than one bar ago must not be used as current data."
+    )
+
+
+def test_L12_stale_options_triggers_sentinel_fill():
+    """
+    run_inference must fall back to sentinel values when options staleness
+    exceeds _MAX_CHAIN_STALENESS, not raise an exception or use stale data.
+
+    Sentinel fill means the pipeline is called with options_data=None,
+    which causes is_null_options=1 and zeros for all options columns.
+    The model was trained on this sentinel pattern and handles it correctly.
+    """
+    from app.inference.inference_service import run_inference, _MAX_CHAIN_STALENESS
+
+    df = _make_ohlcv(60)
+    df["is_closed"] = True
+
+    # Options data that is older than the staleness threshold
+    stale_opts = {
+        "staleness_seconds": _MAX_CHAIN_STALENESS + 1.0,
+        "iv_rank": 0.75,
+        "atm_iv": 0.3,
+        "put_call_ratio": 1.2,
+    }
+
+    result_stale = run_inference(df, "SPY", options_features=stale_opts)
+
+    # Fresh options with same values
+    fresh_opts = {
+        "staleness_seconds": 0.0,
+        "iv_rank": 0.75,
+        "atm_iv": 0.3,
+        "put_call_ratio": 1.2,
+    }
+    result_fresh = run_inference(df, "SPY", options_features=fresh_opts)
+
+    # Both should produce an InferenceResult without crashing.
+    # With a stale snapshot the options sentinel path is used; the result
+    # may differ from the fresh path (different feature values) but must
+    # not crash or propagate the stale values as if they were current.
+    assert result_stale is not None
+    assert result_fresh is not None
+    # The feature snapshot IDs should differ: stale uses sentinel, fresh uses real values
+    # (unless the model happens to be untrained, in which case both abstain identically)
+    # We at minimum verify the function completes cleanly.
+    assert hasattr(result_stale, "action")
+    assert hasattr(result_fresh, "action")

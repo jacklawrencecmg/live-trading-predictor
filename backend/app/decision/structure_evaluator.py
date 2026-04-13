@@ -30,7 +30,7 @@ calculations. When absent, Black-Scholes approximations are used.
 """
 
 import math
-from typing import Optional, List
+from typing import List, Optional, Tuple
 
 from app.decision.models import StructureCandidate, StructureLeg, IVAnalysis
 from app.decision.iv_analysis import iv_edge_for_structure
@@ -141,6 +141,126 @@ def _breakeven_score(
         return 4.0, f"Breakeven ({breakeven_move_pct:.2f}%) > expected move ({expected_move_1d_pct:.2f}%)"
     else:
         return 0.0, f"Breakeven ({breakeven_move_pct:.2f}%) >> expected move ({expected_move_1d_pct:.2f}%) — difficult to profit"
+
+
+def _oi_concentration_score(
+    structure_type: str,
+    structure_direction: str,
+    spot: float,
+    breakeven_move_pct: float,
+    oi_concentrations: List[float],
+) -> Tuple[float, List[str], List[str]]:
+    """
+    Return (score_adjustment, concerns, tailwinds) based on OI clustering.
+
+    Heavy open interest at a strike creates gamma-pinning pressure: market
+    makers who are net-short gamma at that strike delta-hedge in ways that
+    suppress underlying movement near the level, especially as expiry nears.
+
+    For debit structures (long_call, long_put, debit_spread):
+        The trade needs to move THROUGH the breakeven to profit.
+        If a heavy-OI strike lies between spot and the breakeven, the gamma
+        pin may absorb the move before it reaches profitability.
+        → Score penalty proportional to how early the pin intercepts the path.
+
+    For credit structures (credit_spread):
+        The trade profits if the underlying stays AWAY from the short strike.
+        If heavy OI lies beyond the breakeven (further OTM from spot), market-
+        maker hedging near that level suppresses the underlying from breaching
+        it — adding a layer of protection for the credit position.
+        → Small score bonus.
+        If heavy OI lies between spot and the short strike, a pin near the
+        danger zone is a concern.
+    """
+    if not oi_concentrations or breakeven_move_pct <= 0:
+        return 0.0, [], []
+
+    # Compute breakeven price from spot and directional move.
+    # Debit structures move toward their breakeven in the forecast direction:
+    #   bullish (long_call, bull debit spread) → breakeven above spot
+    #   bearish (long_put, bear debit spread) → breakeven below spot
+    # Credit structures break even in the OPPOSITE direction from the threat:
+    #   bullish (bull put spread) → at risk if underlying FALLS → breakeven below spot
+    #   bearish (bear call spread) → at risk if underlying RISES → breakeven above spot
+    is_credit = structure_type == "credit_spread"
+
+    if not is_credit:
+        # Debit / outright: breakeven is in the forecast direction
+        if structure_direction == "bullish":
+            breakeven_price = spot * (1.0 + breakeven_move_pct / 100.0)
+        else:
+            breakeven_price = spot * (1.0 - breakeven_move_pct / 100.0)
+    else:
+        # Credit spread: breakeven is in the OPPOSITE direction (the threat side)
+        if structure_direction == "bullish":
+            breakeven_price = spot * (1.0 - breakeven_move_pct / 100.0)  # below spot
+        else:
+            breakeven_price = spot * (1.0 + breakeven_move_pct / 100.0)  # above spot
+
+    path_lo = min(spot, breakeven_price)
+    path_hi = max(spot, breakeven_price)
+    path_len = abs(breakeven_price - spot)
+
+    concerns: List[str] = []
+    tailwinds: List[str] = []
+
+    if structure_type in ("long_call", "long_put", "debit_spread"):
+        # Find OI levels that intercept the path from spot to breakeven
+        blocking = [oi for oi in oi_concentrations if path_lo < oi < path_hi]
+        if not blocking:
+            return 0.0, concerns, tailwinds
+
+        # Use the OI level closest to spot (earliest intercept = worst block)
+        closest = min(blocking, key=lambda x: abs(x - spot))
+        d = abs(closest - spot) / (path_len + 1e-9)   # 0 = near spot, 1 = near breakeven
+
+        if d < 0.40:
+            penalty, severity = -8.0, "significant"
+        elif d < 0.75:
+            penalty, severity = -5.0, "moderate"
+        else:
+            penalty, severity = -2.0, "minor"
+
+        concerns.append(
+            f"OI concentration at {closest:.2f} ({severity} gamma pin) may absorb "
+            f"move before breakeven at {breakeven_price:.2f}"
+        )
+        return penalty, concerns, tailwinds
+
+    elif structure_type == "credit_spread":
+        # For a credit spread, the danger zone is between spot and breakeven.
+        # OI *beyond* the breakeven provides gamma support (underlying less likely
+        # to run past it); OI *inside* the danger zone is a concern.
+        if structure_direction == "bullish":
+            # Bull put spread: below spot.  Protection OI = further below breakeven.
+            protection_oi = [oi for oi in oi_concentrations if oi < path_lo]
+        else:
+            # Bear call spread: above spot.  Protection OI = further above breakeven.
+            protection_oi = [oi for oi in oi_concentrations if oi > path_hi]
+
+        if protection_oi:
+            # Nearest protection level (closest to the breakeven from outside)
+            if structure_direction == "bullish":
+                anchor = max(protection_oi)   # highest OI below the danger zone
+            else:
+                anchor = min(protection_oi)   # lowest OI above the danger zone
+            tailwinds.append(
+                f"OI concentration at {anchor:.2f} provides gamma support beyond short "
+                f"strike — underlying less likely to breach this level"
+            )
+            return 5.0, concerns, tailwinds
+
+        # OI inside the danger zone → risk of pin near short strike
+        danger_oi = [oi for oi in oi_concentrations if path_lo < oi < path_hi]
+        if danger_oi:
+            closest_danger = min(danger_oi, key=lambda x: abs(x - breakeven_price))
+            concerns.append(
+                f"OI concentration at {closest_danger:.2f} near short strike — "
+                f"gamma pinning could pressure position toward max loss"
+            )
+            return -3.0, concerns, tailwinds
+
+    return 0.0, [], []
 
 
 def _resolve_chain_legs(
@@ -322,6 +442,7 @@ def evaluate_structure(
     atm_bid_ask_pct: float,
     dte: int,
     chain=None,
+    oi_concentrations: Optional[List[float]] = None,
 ) -> StructureCandidate:
     """
     Score one candidate structure and return a fully populated StructureCandidate.
@@ -346,6 +467,10 @@ def evaluate_structure(
         Days to expiry of the selected expiry.
     chain : OptionsChain or None
         Live options chain for resolving actual strikes/prices.
+    oi_concentrations : list of float or None
+        Strikes with heavy open interest. Used to detect gamma-pinning risk
+        (OI between spot and breakeven absorbs the move for debit structures)
+        and to identify protection levels for credit structures.
     """
     # Structure's own directional lean
     direction_map = {
@@ -528,6 +653,17 @@ def evaluate_structure(
             f"Breakeven ({breakeven_move_pct:.2f}%) achievable vs 1-day expected move ({expected_move_1d_pct:.2f}%)"
         )
 
+    # ── 4b. OI concentration ─────────────────────────────────────────────────
+    # Gamma pinning at heavy-OI strikes can absorb moves (debit penalty) or
+    # provide protection beyond the short strike (credit bonus).
+    oi_adjustment = 0.0
+    if oi_concentrations:
+        oi_adjustment, oi_concerns, oi_tailwinds = _oi_concentration_score(
+            structure_type, structure_direction, spot, breakeven_move_pct, oi_concentrations
+        )
+        concerns.extend(oi_concerns)
+        tailwinds.extend(oi_tailwinds)
+
     # ── 5. Liquidity ──────────────────────────────────────────────────────────
     liq_fit, liq_score, fill_cost, liq_concerns = _liquidity_score(
         liquidity_quality, atm_bid_ask_pct, dte
@@ -536,8 +672,10 @@ def evaluate_structure(
 
     # ── 6. Total score ────────────────────────────────────────────────────────
     raw_score = dir_score + iv_score + be_score + liq_score
+    # Apply OI adjustment (capped to [0, 100] before disqualification floor)
+    adjusted_score = max(0.0, min(100.0, raw_score + oi_adjustment))
     # Hard disqualification: floor to max 20 (not viable) but keep the score info
-    final_score = round(min(raw_score, 20.0) if disqualified else raw_score, 1)
+    final_score = round(min(adjusted_score, 20.0) if disqualified else adjusted_score, 1)
     viable = (not disqualified) and (final_score >= MIN_VIABLE_SCORE) and (dir_score > 0)
 
     # ── 7. Build horizon note ─────────────────────────────────────────────────

@@ -118,8 +118,14 @@ def score_signal(
     vol_score = 70 if vol_context == "normal" else (40 if vol_context == "contracting" else 30)
     move_score = min(100, (expected_move_pct / max(min_expected_move, 0.01)) * 50)
 
-    # Calibration health penalty
-    cal_penalty_map = {"good": 1.0, "fair": 0.85, "degraded": 0.60, "unknown": 0.75}
+    # Calibration health penalty (applied to raw quality score)
+    cal_penalty_map = {
+        "good":     1.00,
+        "fair":     0.85,
+        "caution":  0.70,
+        "degraded": 0.60,
+        "unknown":  0.75,
+    }
     cal_penalty = cal_penalty_map.get(calibration_health, 0.75)
 
     # Combined quality score

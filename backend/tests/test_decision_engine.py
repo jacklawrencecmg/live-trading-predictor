@@ -31,6 +31,9 @@ DE26 — to_dict() serializes without error; nested IVAnalysis present
 
 import pytest
 from unittest.mock import MagicMock
+
+pytestmark = pytest.mark.risk_critical
+
 from app.decision.decision_engine import build_options_decision, _annualized_rv, _scale_to_1d
 from app.decision.iv_analysis import compute_iv_analysis, iv_edge_for_structure
 from app.decision.structure_evaluator import evaluate_structure

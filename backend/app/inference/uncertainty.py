@@ -154,6 +154,16 @@ def _calibration_health(
     baseline_brier: Optional[float],
     ece_recent: Optional[float],
 ) -> str:
+    """
+    Classify model calibration health from rolling performance statistics.
+
+    States (ordered from best to worst):
+      good     — rolling Brier ≤ 1.1× baseline AND ECE ≤ 0.05
+      fair     — rolling Brier ≤ 1.3× baseline OR ECE ≤ 0.10
+      caution  — rolling Brier ≤ 1.6× baseline OR ECE ≤ 0.15 (signal shrunk)
+      degraded — worse than caution (hard-abstain may trigger)
+      unknown  — insufficient history (< MIN_WINDOW_FOR_STATS observations)
+    """
     if rolling_brier is None or baseline_brier is None:
         return "unknown"
     ratio = rolling_brier / (baseline_brier + 1e-9)
@@ -162,6 +172,8 @@ def _calibration_health(
         return "good"
     if ratio <= 1.3 or ece <= 0.10:
         return "fair"
+    if ratio <= 1.6 or ece <= 0.15:
+        return "caution"
     return "degraded"
 
 
