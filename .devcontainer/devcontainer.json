@@ -1,0 +1,64 @@
+{
+  "name": "Options Research",
+
+  // Base image with Python 3.11, Node 20, and Docker already installed.
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+
+  "features": {
+    // Python 3.11
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" },
+    // Node 20
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    // Docker-in-Docker so we can run docker compose inside the Codespace
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+
+  // Build images and start all services the first time the Codespace is created.
+  // This runs once; subsequent opens use postStartCommand (no rebuild).
+  "postCreateCommand": "docker compose up -d --build",
+
+  // On every Codespace resume, ensure services are running.
+  "postStartCommand": "docker compose up -d",
+
+  // Forward the frontend (3000) and backend (8000) ports.
+  "forwardPorts": [3000, 8000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Frontend",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    },
+    "8000": {
+      "label": "Backend API",
+      "onAutoForward": "silent",
+      "visibility": "private"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.pylance",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.python"
+        }
+      }
+    }
+  },
+
+  // Run as root inside the container so docker-compose can bind to ports.
+  "remoteUser": "root"
+}
