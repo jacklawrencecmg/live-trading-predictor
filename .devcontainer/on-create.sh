@@ -14,16 +14,29 @@ sudo apt-get install -y redis-server postgresql postgresql-contrib \
 
 step "[2/4] Configuring PostgreSQL"
 sudo service postgresql start || true
+
+# Switch to trust auth so no password is needed for local connections.
+# This lets psql -U postgres work without sudo -u postgres.
+sudo sed -i \
+  's/^\(local\s\+all\s\+\w\+\s\+\)peer/\1trust/g' \
+  /etc/postgresql/*/main/pg_hba.conf 2>/dev/null || true
+
+sudo service postgresql restart || true
+
+# Wait for postgres to accept connections
 for i in $(seq 1 20); do
   pg_isready -U postgres -q 2>/dev/null && break; sleep 1
 done
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';" 2>/dev/null || true
-sudo -u postgres createdb options_research 2>/dev/null \
-  && echo "  DB created" || echo "  DB already exists — skipping"
+
+# Create DB and set password (no sudo -u postgres needed with trust auth)
+psql -U postgres -c "ALTER USER postgres PASSWORD 'postgres';" 2>/dev/null || true
+psql -U postgres -c "CREATE DATABASE options_research;" 2>/dev/null \
+  && echo "  DB created" \
+  || echo "  DB already exists — skipping"
 
 step "[3/4] Installing Python deps"
 pip install -q -r "$WS/backend/requirements.txt" \
-  && echo "  OK" || echo "  WARN: pip install had errors — check requirements.txt"
+  && echo "  OK" || echo "  WARN: pip install had errors"
 
 step "[4/4] Installing Node deps"
 npm install --prefix "$WS/frontend" --silent \
