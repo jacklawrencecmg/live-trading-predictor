@@ -20,11 +20,14 @@ async def fetch_candles(
     period: str = "5d",
 ) -> CandleResponse:
     cache_key = f"candles:{symbol}:{interval}:{period}"
-    redis = await get_redis()
-    cached = await redis.get(cache_key)
-    if cached:
-        data = json.loads(cached)
-        return CandleResponse(**data)
+    _redis = None
+    try:
+        _redis = await get_redis()
+        cached = await _redis.get(cache_key)
+        if cached:
+            return CandleResponse(**json.loads(cached))
+    except Exception:
+        _redis = None  # Redis unavailable — skip cache
 
     loop = asyncio.get_event_loop()
     df = await loop.run_in_executor(None, _download_candles, symbol, interval, period)
@@ -47,7 +50,11 @@ async def fetch_candles(
         )
 
     result = CandleResponse(symbol=symbol, interval=interval, candles=candles)
-    await redis.setex(cache_key, CACHE_TTL_CANDLES, result.model_dump_json())
+    if _redis is not None:
+        try:
+            await _redis.setex(cache_key, CACHE_TTL_CANDLES, result.model_dump_json())
+        except Exception:
+            pass
     return result
 
 
@@ -60,15 +67,23 @@ def _download_candles(symbol: str, interval: str, period: str) -> pd.DataFrame:
 
 async def fetch_quote(symbol: str) -> MarketQuote:
     cache_key = f"quote:{symbol}"
-    redis = await get_redis()
-    cached = await redis.get(cache_key)
-    if cached:
-        return MarketQuote(**json.loads(cached))
+    _redis = None
+    try:
+        _redis = await get_redis()
+        cached = await _redis.get(cache_key)
+        if cached:
+            return MarketQuote(**json.loads(cached))
+    except Exception:
+        _redis = None  # Redis unavailable — skip cache
 
     loop = asyncio.get_event_loop()
     info = await loop.run_in_executor(None, _get_fast_info, symbol)
     quote = MarketQuote(**info)
-    await redis.setex(cache_key, CACHE_TTL_QUOTE, quote.model_dump_json())
+    if _redis is not None:
+        try:
+            await _redis.setex(cache_key, CACHE_TTL_QUOTE, quote.model_dump_json())
+        except Exception:
+            pass
     return quote
 
 
@@ -92,8 +107,11 @@ def _get_fast_info(symbol: str) -> dict:
 
 
 async def invalidate_cache(symbol: str):
-    redis = await get_redis()
-    pattern = f"*{symbol}*"
-    keys = await redis.keys(pattern)
-    if keys:
-        await redis.delete(*keys)
+    try:
+        redis = await get_redis()
+        pattern = f"*{symbol}*"
+        keys = await redis.keys(pattern)
+        if keys:
+            await redis.delete(*keys)
+    except Exception:
+        pass  # Redis unavailable — skip cache invalidation

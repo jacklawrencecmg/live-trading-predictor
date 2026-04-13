@@ -103,14 +103,22 @@ def _time_to_expiry(expiry_str: str) -> float:
 
 async def fetch_options_chain(symbol: str, expiry: Optional[str] = None) -> OptionsChain:
     cache_key = f"options:{symbol}:{expiry or 'nearest'}"
-    redis = await get_redis()
-    cached = await redis.get(cache_key)
-    if cached:
-        return OptionsChain(**json.loads(cached))
+    _redis = None
+    try:
+        _redis = await get_redis()
+        cached = await _redis.get(cache_key)
+        if cached:
+            return OptionsChain(**json.loads(cached))
+    except Exception:
+        _redis = None  # Redis unavailable — skip cache
 
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, _build_chain, symbol, expiry)
-    await redis.setex(cache_key, CACHE_TTL, result.model_dump_json())
+    if _redis is not None:
+        try:
+            await _redis.setex(cache_key, CACHE_TTL, result.model_dump_json())
+        except Exception:
+            pass
     return result
 
 
