@@ -6,6 +6,7 @@ GET /api/signals/{symbol}
 """
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import pandas as pd
 
@@ -153,3 +154,71 @@ async def get_signal(
             "rationale": trade_idea.rationale,
         },
     }
+
+
+@router.get("/{symbol}/history")
+async def get_signal_history(
+    symbol: str,
+    limit: int = Query(20, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return recent inference events for a symbol as a forecast-vs-realized table.
+    Pulls from the governance inference_events log so outcomes can be compared
+    against predictions after the fact.
+    """
+    symbol = symbol.upper()
+    try:
+        from app.governance.models import InferenceEvent
+        result = await db.execute(
+            select(InferenceEvent)
+            .where(InferenceEvent.symbol == symbol)
+            .order_by(InferenceEvent.inference_ts.desc())
+            .limit(limit)
+        )
+        events = list(reversed(result.scalars().all()))
+    except Exception:
+        # governance tables not yet created or module unavailable
+        return []
+
+    rows = []
+    for ev in events:
+        # Map prob_up to direction
+        prob = ev.calibrated_prob_up or ev.prob_up or 0.5
+        if ev.action == "abstain":
+            direction = "abstain"
+        elif prob >= 0.55:
+            direction = "bullish"
+        elif prob <= 0.45:
+            direction = "bearish"
+        else:
+            direction = "neutral"
+
+        # Map actual_outcome (int 0/1) to string
+        actual = None
+        outcome_pct = None
+        correct = None
+        if ev.actual_outcome is not None:
+            actual = "up" if ev.actual_outcome == 1 else "down"
+            if ev.expected_move_pct:
+                outcome_pct = ev.expected_move_pct if ev.actual_outcome == 1 else -ev.expected_move_pct
+            if ev.action not in ("abstain", None):
+                predicted_up = ev.action == "buy"
+                correct = (ev.actual_outcome == 1) == predicted_up
+
+        rows.append({
+            "id": ev.id,
+            "symbol": ev.symbol,
+            "bar_open_time": ev.bar_open_time.isoformat() if ev.bar_open_time else None,
+            "direction": direction,
+            "calibrated_prob": round(prob, 4),
+            "confidence_score": ev.tradeable_confidence,
+            "regime": ev.regime or "unknown",
+            "action": ev.action or "abstain",
+            "abstain_reason": ev.abstain_reason,
+            "actual_outcome": actual,
+            "outcome_pct": outcome_pct,
+            "correct": correct,
+        })
+
+    return rows

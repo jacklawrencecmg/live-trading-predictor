@@ -1,11 +1,11 @@
-import asyncio
-import json
+import logging
 from datetime import datetime, date
 from typing import Optional
 
 from app.core.config import settings
-from app.core.redis_client import get_redis
+from app.core.redis_client import get_redis  # module-level so tests can patch it
 
+logger = logging.getLogger(__name__)
 
 DAILY_PNL_KEY = "risk:daily_pnl:{date}"
 LAST_TRADE_KEY = "risk:last_trade:{symbol}"
@@ -17,68 +17,95 @@ class RiskViolation(Exception):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Redis-resilient helpers — all reads return safe defaults on connection error.
+# Writes log a warning and no-op so the app stays functional without Redis.
+# ---------------------------------------------------------------------------
+
 async def get_capital() -> float:
-    redis = await get_redis()
-    val = await redis.get(CAPITAL_KEY)
-    return float(val) if val else settings.starting_capital
+    try:
+        r = await get_redis()
+        val = await r.get(CAPITAL_KEY)
+        return float(val) if val else settings.starting_capital
+    except Exception as exc:
+        logger.warning("get_capital: Redis unavailable (%s) — using starting capital", exc)
+        return settings.starting_capital
 
 
 async def set_capital(capital: float):
-    redis = await get_redis()
-    await redis.set(CAPITAL_KEY, str(capital))
+    try:
+        r = await get_redis()
+        await r.set(CAPITAL_KEY, str(capital))
+    except Exception as exc:
+        logger.warning("set_capital: Redis unavailable (%s) — state not persisted", exc)
 
 
 async def get_daily_pnl() -> float:
-    redis = await get_redis()
-    key = DAILY_PNL_KEY.format(date=date.today().isoformat())
-    val = await redis.get(key)
-    return float(val) if val else 0.0
+    try:
+        r = await get_redis()
+        key = DAILY_PNL_KEY.format(date=date.today().isoformat())
+        val = await r.get(key)
+        return float(val) if val else 0.0
+    except Exception as exc:
+        logger.warning("get_daily_pnl: Redis unavailable (%s) — returning 0", exc)
+        return 0.0
 
 
 async def add_pnl(pnl: float):
-    redis = await get_redis()
-    key = DAILY_PNL_KEY.format(date=date.today().isoformat())
-    val = await redis.get(key)
-    current = float(val) if val else 0.0
-    await redis.setex(key, 86400, str(current + pnl))
+    try:
+        r = await get_redis()
+        key = DAILY_PNL_KEY.format(date=date.today().isoformat())
+        val = await r.get(key)
+        current = float(val) if val else 0.0
+        await r.setex(key, 86400, str(current + pnl))
+    except Exception as exc:
+        logger.warning("add_pnl: Redis unavailable (%s) — PnL not recorded", exc)
 
 
 async def is_kill_switch_active() -> bool:
-    redis = await get_redis()
-    val = await redis.get(KILL_SWITCH_KEY)
-    return val == "1" or settings.kill_switch
+    try:
+        r = await get_redis()
+        val = await r.get(KILL_SWITCH_KEY)
+        return val == "1" or settings.kill_switch
+    except Exception as exc:
+        logger.warning("is_kill_switch_active: Redis unavailable (%s) — using settings default", exc)
+        return settings.kill_switch
 
 
 async def set_kill_switch(active: bool):
-    redis = await get_redis()
-    if active:
-        await redis.set(KILL_SWITCH_KEY, "1")
-    else:
-        await redis.delete(KILL_SWITCH_KEY)
+    try:
+        r = await get_redis()
+        if active:
+            await r.set(KILL_SWITCH_KEY, "1")
+        else:
+            await r.delete(KILL_SWITCH_KEY)
+    except Exception as exc:
+        logger.warning("set_kill_switch: Redis unavailable (%s) — state not persisted", exc)
 
 
 async def record_trade_time(symbol: str):
-    redis = await get_redis()
-    key = LAST_TRADE_KEY.format(symbol=symbol)
-    await redis.setex(key, settings.cooldown_minutes * 60, datetime.utcnow().isoformat())
+    try:
+        r = await get_redis()
+        key = LAST_TRADE_KEY.format(symbol=symbol)
+        await r.setex(key, settings.cooldown_minutes * 60, datetime.utcnow().isoformat())
+    except Exception as exc:
+        logger.warning("record_trade_time: Redis unavailable (%s)", exc)
 
 
 async def check_cooldown(symbol: str) -> bool:
     """Returns True if cooldown is active (trade blocked)."""
-    redis = await get_redis()
-    key = LAST_TRADE_KEY.format(symbol=symbol)
-    val = await redis.get(key)
-    return val is not None
+    try:
+        r = await get_redis()
+        key = LAST_TRADE_KEY.format(symbol=symbol)
+        val = await r.get(key)
+        return val is not None
+    except Exception as exc:
+        logger.warning("check_cooldown: Redis unavailable (%s) — cooldown not enforced", exc)
+        return False
 
 
-async def check_all_risks(
-    symbol: str,
-    trade_value: float,
-) -> None:
+async def check_all_risks(symbol: str, trade_value: float) -> None:
     """Raises RiskViolation if any check fails."""
-    # Check both the Redis kill switch (this module) and the governance DB-backed
-    # kill switch (app.governance.kill_switch) so that activating either one halts
-    # trading.  The governance cached check is TTL-based (5 s) and adds no I/O.
     if await is_kill_switch_active():
         raise RiskViolation("Kill switch is active — all trading halted")
     try:
@@ -94,7 +121,6 @@ async def check_all_risks(
     daily_pnl = await get_daily_pnl()
     max_daily_loss = capital * settings.max_daily_loss_pct
     if daily_pnl < -max_daily_loss:
-        # Auto-activate kill switch
         await set_kill_switch(True)
         raise RiskViolation(
             f"Max daily loss breached: PnL={daily_pnl:.2f}, limit={-max_daily_loss:.2f}"
