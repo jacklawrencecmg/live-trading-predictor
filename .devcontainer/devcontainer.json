@@ -1,29 +1,26 @@
 {
   "name": "Options Research",
 
-  // Base image with Python 3.11, Node 20, and Docker already installed.
+  // Ubuntu base + Python 3.11 + Node 20 + PostgreSQL 16 as devcontainer features.
+  // No Docker-in-Docker needed — services run directly as processes.
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
 
   "features": {
-    // Python 3.11
     "ghcr.io/devcontainers/features/python:1": { "version": "3.11" },
-    // Node 20
     "ghcr.io/devcontainers/features/node:1": { "version": "20" },
-    // Docker-in-Docker so we can run docker compose inside the Codespace
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {
-      "moby": true,
-      "dockerDashComposeVersion": "v2"
+    "ghcr.io/devcontainers/features/postgres:1": {
+      "version": "16",
+      "postgresPassword": "postgres"
     }
   },
 
-  // Build images and start all services the first time the Codespace is created.
-  // This runs once; subsequent opens use postStartCommand (no rebuild).
-  "postCreateCommand": "docker compose up -d --build",
+  // Runs ONCE when the Codespace is first created.
+  // Installs Redis, creates DB, installs Python + Node deps.
+  "postCreateCommand": "bash .devcontainer/on-create.sh",
 
-  // On every Codespace resume, ensure services are running.
-  "postStartCommand": "docker compose up -d",
+  // Runs on every start/resume — starts Redis, backend, frontend.
+  "postStartCommand": "bash .devcontainer/post-start.sh",
 
-  // Forward the frontend (3000) and backend (8000) ports.
   "forwardPorts": [3000, 8000],
   "portsAttributes": {
     "3000": {
@@ -44,21 +41,10 @@
         "ms-python.python",
         "ms-python.pylance",
         "dbaeumer.vscode-eslint",
-        "esbenp.prettier-vscode",
-        "bradlc.vscode-tailwindcss",
-        "ms-azuretools.vscode-docker"
-      ],
-      "settings": {
-        "python.defaultInterpreterPath": "/usr/local/bin/python",
-        "editor.formatOnSave": true,
-        "editor.defaultFormatter": "esbenp.prettier-vscode",
-        "[python]": {
-          "editor.defaultFormatter": "ms-python.python"
-        }
-      }
+        "bradlc.vscode-tailwindcss"
+      ]
     }
   },
 
-  // Run as root inside the container so docker-compose can bind to ports.
-  "remoteUser": "root"
+  "remoteUser": "vscode"
 }
