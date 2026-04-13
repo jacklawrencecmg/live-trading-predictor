@@ -111,6 +111,7 @@ export interface PredictionBundle {
 
 export interface ScoredSignal {
   direction: string;
+  action: string;
   raw_probability: number;
   probability: number;
   tradeable_confidence: number;
@@ -154,6 +155,8 @@ export interface UncertaintyStats {
   baseline_brier: number | null;
   ece_recent: number | null;
   reliability_diagram: ReliabilityDiagram | null;
+  needs_retrain?: boolean;
+  retrain_reason?: string | null;
 }
 
 export interface PortfolioSummary {
@@ -510,3 +513,24 @@ export interface PnLSummary {
 
 export const getPnLSummary = () =>
   api.get<PnLSummary>("/api/trades/pnl-summary");
+
+// ---------------------------------------------------------------------------
+// Governance freshness
+// ---------------------------------------------------------------------------
+
+export interface FreshnessSourceStatus {
+  is_stale: boolean;
+  age_seconds: number | null;
+  last_data_ts: string | null;
+  staleness_threshold_seconds?: number;
+}
+
+export interface GovernanceFreshnessStatus {
+  symbol: string;
+  sources: Record<string, FreshnessSourceStatus>;
+  any_stale: boolean;
+  checked_at: string;
+}
+
+export const getGovernanceFreshness = (symbol: string) =>
+  api.get<GovernanceFreshnessStatus>(`/api/governance/freshness/${symbol}`);

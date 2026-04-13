@@ -189,7 +189,7 @@ class DriftMonitor:
         result = await db.execute(
             select(DriftSnapshot)
             .where(DriftSnapshot.symbol == symbol)
-            .order_by(DriftSnapshot.computed_at.desc())
+            .order_by(DriftSnapshot.computed_at.desc(), DriftSnapshot.id.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()

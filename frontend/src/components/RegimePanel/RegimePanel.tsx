@@ -56,13 +56,13 @@ function RegimeBadge({ regime, suppressed }: { regime: string; suppressed: boole
   return (
     <div className="flex items-center gap-2">
       <div
-        className={clsx("w-2.5 h-2.5 rounded-full flex-none", REGIME_BG[regime] ?? "bg-gray-600")}
+        className={clsx("w-2 h-2 rounded-full flex-none", REGIME_BG[regime] ?? "bg-zinc-600")}
       />
-      <span className={clsx("text-base font-bold tracking-tight", REGIME_COLOR[regime] ?? "text-gray-400")}>
+      <span className={clsx("text-[11px] font-semibold tracking-wide", REGIME_COLOR[regime] ?? "text-zinc-400")}>
         {REGIME_LABEL[regime] ?? regime.replace(/_/g, " ")}
       </span>
       {suppressed && (
-        <span className="text-xs px-1.5 py-0.5 rounded border border-red-trade/40 bg-red-trade/10 text-red-trade font-medium">
+        <span className="text-[10px] px-1.5 py-0.5 rounded-[2px] border border-red-400/40 bg-red-400/10 text-red-400 font-semibold">
           NO TRADE
         </span>
       )}
@@ -96,23 +96,23 @@ function SignalBar({
 
   return (
     <div className="flex items-center gap-2">
-      <span className="text-xs text-gray-500 w-24 flex-none truncate">{label}</span>
+      <span className="text-[10px] text-zinc-500 w-24 flex-none truncate">{label}</span>
       <div className="flex-1 bg-border rounded-full h-1.5 relative">
         <div className={clsx("h-1.5 rounded-full", color)} style={{ width: `${pct}%` }} />
         {thresholdHigh !== undefined && (
           <div
-            className="absolute top-0 w-px h-1.5 bg-red-trade/60"
+            className="absolute top-0 w-px h-1.5 bg-red-400/60"
             style={{ left: `${((thresholdHigh - min) / (max - min)) * 100}%` }}
           />
         )}
         {thresholdLow !== undefined && (
           <div
-            className="absolute top-0 w-px h-1.5 bg-yellow-500/60"
+            className="absolute top-0 w-px h-1.5 bg-amber-400/60"
             style={{ left: `${((thresholdLow - min) / (max - min)) * 100}%` }}
           />
         )}
       </div>
-      <span className="text-xs text-white w-10 text-right tabular-nums">{value.toFixed(2)}</span>
+      <span className="text-[10px] text-zinc-200 font-mono w-10 text-right tabular-nums">{value.toFixed(2)}</span>
     </div>
   );
 }
@@ -127,7 +127,7 @@ function RegimeTimeline({ history }: { history: RegimeHistory["history"] }) {
   // Group runs for tooltip performance
   return (
     <div>
-      <div className="text-xs text-gray-500 mb-1">
+      <div className="text-[10px] text-zinc-500 mb-1">
         Regime history — last {history.length} bars
       </div>
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="rounded overflow-hidden" style={{ height: H }}>
@@ -169,7 +169,7 @@ function RegimeTimeline({ history }: { history: RegimeHistory["history"] }) {
             ["event_risk", "#ff0000", "Event"],
           ] as [string, string, string][]
         ).map(([, color, label]) => (
-          <span key={label} className="flex items-center gap-1 text-[10px] text-gray-600">
+          <span key={label} className="flex items-center gap-1 text-[10px] text-zinc-600">
             <span className="inline-block w-2 h-2 rounded-sm" style={{ background: color, opacity: 0.7 }} />
             {label}
           </span>
@@ -179,16 +179,28 @@ function RegimeTimeline({ history }: { history: RegimeHistory["history"] }) {
   );
 }
 
+// Hex colors for regime distribution bars (avoids Tailwind class name extraction issues)
+const REGIME_HEX: Record<string, string> = {
+  trending_up:    "#34d399",
+  trending_down:  "#f87171",
+  mean_reverting: "#fbbf24",
+  high_volatility:"#f87171",
+  low_volatility: "#71717a",
+  liquidity_poor: "#fb923c",
+  event_risk:     "#ef4444",
+  unknown:        "#3f3f46",
+};
+
 /** Bar chart of regime distribution */
 function RegimeDistributionChart({ distribution }: { distribution: Partial<Record<RegimeName, number>> }) {
   const entries = Object.entries(distribution).sort((a, b) => b[1] - a[1]);
-  if (entries.length === 0) return <div className="text-xs text-gray-600 italic">No stored data yet</div>;
+  if (entries.length === 0) return <div className="text-[10px] text-zinc-600 italic">No stored data yet</div>;
 
   return (
     <div className="flex flex-col gap-1">
       {entries.map(([regime, frac]) => (
         <div key={regime} className="flex items-center gap-2">
-          <span className="text-[10px] text-gray-500 w-20 truncate flex-none">
+          <span className="text-[10px] text-zinc-500 w-20 truncate flex-none">
             {REGIME_LABEL[regime] ?? regime}
           </span>
           <div className="flex-1 bg-border rounded-full h-1.5">
@@ -196,11 +208,11 @@ function RegimeDistributionChart({ distribution }: { distribution: Partial<Recor
               className="h-1.5 rounded-full"
               style={{
                 width: `${(frac * 100).toFixed(1)}%`,
-                background: REGIME_BG[regime]?.replace("bg-", "") ?? "#58a6ff",
+                backgroundColor: REGIME_HEX[regime] ?? "#58a6ff",
               }}
             />
           </div>
-          <span className="text-[10px] text-gray-500 w-8 text-right">
+          <span className="text-[10px] text-zinc-500 w-8 text-right">
             {(frac * 100).toFixed(0)}%
           </span>
         </div>
@@ -226,22 +238,22 @@ function ThresholdTable({
   return (
     <table className="w-full text-[10px] border-collapse">
       <thead>
-        <tr className="text-gray-600 border-b border-border">
-          <th className="text-left py-1">Regime</th>
-          <th className="text-right py-1">Conf. thresh</th>
-          <th className="text-right py-1">Quality min</th>
-          <th className="text-right py-1">Trade?</th>
+        <tr className="text-zinc-600 border-b border-border">
+          <th className="text-left py-1 font-normal">Regime</th>
+          <th className="text-right py-1 font-normal">Conf.</th>
+          <th className="text-right py-1 font-normal">Quality</th>
+          <th className="text-right py-1 font-normal">Trade?</th>
         </tr>
       </thead>
       <tbody>
         {rows.map(([regime, t]) => (
           <tr key={regime} className="border-b border-border/40">
-            <td className={clsx("py-0.5", REGIME_COLOR[regime] ?? "text-gray-400")}>
+            <td className={clsx("py-0.5", REGIME_COLOR[regime] ?? "text-zinc-400")}>
               {REGIME_LABEL[regime] ?? regime}
             </td>
-            <td className="text-right text-gray-400">{(t.confidence_threshold * 100).toFixed(0)}%</td>
-            <td className="text-right text-gray-400">{t.min_signal_quality.toFixed(0)}</td>
-            <td className={clsx("text-right font-medium", t.allow_trade ? "text-green-trade" : "text-red-trade")}>
+            <td className="text-right text-zinc-500 font-mono">{(t.confidence_threshold * 100).toFixed(0)}%</td>
+            <td className="text-right text-zinc-500 font-mono">{t.min_signal_quality.toFixed(0)}</td>
+            <td className={clsx("text-right font-medium font-mono", t.allow_trade ? "text-emerald-400" : "text-red-400")}>
               {t.allow_trade ? "✓" : "✗"}
             </td>
           </tr>
@@ -288,17 +300,21 @@ export default function RegimePanel({ symbol }: Props) {
 
   if (loading && !ctx) {
     return (
-      <div className="flex items-center justify-center h-32 text-gray-500 text-xs">
-        Detecting regime...
+      <div className="inst-panel">
+        <div className="inst-header"><span className="inst-label">Regime</span></div>
+        <div className="inst-body text-zinc-600 text-[11px]">Detecting regime…</div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="text-red-trade text-xs p-2">
-        {error}
-        <button onClick={fetchAll} className="ml-2 text-accent hover:underline">retry</button>
+      <div className="inst-panel">
+        <div className="inst-header"><span className="inst-label">Regime</span></div>
+        <div className="inst-body">
+          <span className="text-red-400 text-[11px]">{error}</span>
+          <button onClick={fetchAll} className="ml-2 text-[11px] text-accent hover:underline">retry</button>
+        </div>
       </div>
     );
   }
@@ -306,150 +322,150 @@ export default function RegimePanel({ symbol }: Props) {
   if (!ctx) return null;
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="inst-panel">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="inst-header">
         <RegimeBadge regime={ctx.regime} suppressed={ctx.suppressed} />
         <button
           onClick={fetchAll}
           disabled={loading}
-          className="text-xs text-accent hover:underline disabled:opacity-40"
+          className="text-[11px] text-accent hover:underline disabled:opacity-40"
         >
-          {loading ? "..." : "↻"}
+          {loading ? "…" : "↻"}
         </button>
       </div>
 
-      {/* Description */}
-      <div className="text-xs text-gray-500 leading-relaxed">{ctx.description}</div>
+      <div className="inst-body flex flex-col gap-3">
+        {/* Description */}
+        <div className="text-[11px] text-zinc-500 leading-relaxed">{ctx.description}</div>
 
-      {/* Suppression callout */}
-      {ctx.suppressed && ctx.suppress_reason && (
-        <div className="text-xs bg-red-trade/5 border border-red-trade/20 rounded px-2 py-1 text-red-trade/80">
-          Trading suppressed: {ctx.suppress_reason.replace(/_/g, " ")}
-          {" · "}confidence threshold raised to {(ctx.confidence_threshold * 100).toFixed(0)}%
+        {/* Suppression callout */}
+        {ctx.suppressed && ctx.suppress_reason && (
+          <div className="text-[11px] bg-red-400/5 border border-red-400/20 rounded-[2px] px-2 py-1.5 text-red-400/80">
+            Trading suppressed: {ctx.suppress_reason.replace(/_/g, " ")}
+            {" · "}confidence threshold raised to {(ctx.confidence_threshold * 100).toFixed(0)}%
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className="flex gap-1 border-b border-border pb-1">
+          {(["current", "history", "thresholds"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={clsx(
+                "text-[10px] px-2 py-0.5 rounded-[2px] capitalize",
+                tab === t ? "bg-accent/15 text-accent font-semibold" : "text-zinc-500 hover:text-zinc-200"
+              )}
+            >
+              {t}
+            </button>
+          ))}
         </div>
-      )}
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-border pb-1">
-        {(["current", "history", "thresholds"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={clsx(
-              "text-xs px-2 py-0.5 rounded capitalize",
-              tab === t ? "bg-accent/20 text-accent font-semibold" : "text-gray-500 hover:text-white"
+        {/* Tab: current signals */}
+        {tab === "current" && (
+          <div className="flex flex-col gap-2">
+            <div className="text-[10px] text-zinc-600 uppercase tracking-[0.10em]">Signals</div>
+            <SignalBar
+              label="ADX (strength)"
+              value={ctx.signals.adx_proxy}
+              min={0} max={60}
+              thresholdHigh={25}
+            />
+            <SignalBar
+              label="ATR ratio"
+              value={ctx.signals.atr_ratio}
+              min={0} max={3}
+              thresholdHigh={1.5}
+              thresholdLow={0.5}
+            />
+            <SignalBar
+              label="Volume ratio"
+              value={ctx.signals.volume_ratio}
+              min={0} max={3}
+              thresholdLow={0.25}
+            />
+            <SignalBar
+              label="Range / ATR"
+              value={ctx.signals.bar_range_ratio}
+              min={0} max={3}
+              thresholdLow={0.2}
+            />
+
+            <div className="grid grid-cols-2 gap-1 mt-1">
+              <div className="bg-surface rounded-[2px] p-1.5">
+                <div className="text-[10px] text-zinc-600">Trend dir</div>
+                <div className={clsx(
+                  "text-[11px] font-mono",
+                  ctx.signals.trend_direction === "up" ? "text-emerald-400" :
+                  ctx.signals.trend_direction === "down" ? "text-red-400" : "text-zinc-400"
+                )}>
+                  {ctx.signals.trend_direction === "up" ? "↑ Up" :
+                   ctx.signals.trend_direction === "down" ? "↓ Down" : "→ Flat"}
+                </div>
+              </div>
+              <div className="bg-surface rounded-[2px] p-1.5">
+                <div className="text-[10px] text-zinc-600">Abnormal move</div>
+                <div className={clsx(
+                  "text-[11px] font-mono",
+                  ctx.signals.is_abnormal_move ? "text-red-400 font-semibold" : "text-zinc-400"
+                )}>
+                  {ctx.signals.is_abnormal_move
+                    ? `Yes (${ctx.signals.abnormal_move_sigma.toFixed(1)}σ)`
+                    : `No (${ctx.signals.abnormal_move_sigma.toFixed(1)}σ)`}
+                </div>
+              </div>
+              <div className="bg-surface rounded-[2px] p-1.5">
+                <div className="text-[10px] text-zinc-600">Conf. threshold</div>
+                <div className={clsx("text-[11px] font-mono", ctx.suppressed ? "text-red-400" : "text-zinc-200")}>
+                  {(ctx.confidence_threshold * 100).toFixed(0)}%
+                </div>
+              </div>
+              <div className="bg-surface rounded-[2px] p-1.5">
+                <div className="text-[10px] text-zinc-600">Quality min</div>
+                <div className="text-[11px] font-mono text-zinc-200">{ctx.min_signal_quality.toFixed(0)}</div>
+              </div>
+            </div>
+
+            {/* Distribution (if available) */}
+            {distribution && Object.keys(distribution.distribution).length > 0 && (
+              <div className="mt-1">
+                <div className="text-[10px] text-zinc-600 uppercase tracking-[0.10em] mb-1">
+                  Distribution (stored history)
+                </div>
+                <RegimeDistributionChart distribution={distribution.distribution} />
+              </div>
             )}
-          >
-            {t}
-          </button>
-        ))}
+          </div>
+        )}
+
+        {/* Tab: history timeline */}
+        {tab === "history" && (
+          <div>
+            {history && history.count > 0 ? (
+              <RegimeTimeline history={history.history} />
+            ) : (
+              <div className="text-[11px] text-zinc-600 italic text-center py-4">
+                No stored regime history yet.
+                <br />
+                Regime labels are saved at each inference call.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab: threshold table */}
+        {tab === "thresholds" && (
+          <div>
+            <div className="text-[10px] text-zinc-600 mb-2">
+              Per-regime trading thresholds. Suppressed regimes (✗) never generate trade ideas
+              regardless of confidence.
+            </div>
+            <ThresholdTable thresholds={ctx.thresholds} />
+          </div>
+        )}
       </div>
-
-      {/* Tab: current signals */}
-      {tab === "current" && (
-        <div className="flex flex-col gap-2">
-          <div className="text-[10px] text-gray-600 uppercase tracking-wider">Signals</div>
-          <SignalBar
-            label="ADX (strength)"
-            value={ctx.signals.adx_proxy}
-            min={0} max={60}
-            thresholdHigh={25}
-          />
-          <SignalBar
-            label="ATR ratio"
-            value={ctx.signals.atr_ratio}
-            min={0} max={3}
-            thresholdHigh={1.5}
-            thresholdLow={0.5}
-          />
-          <SignalBar
-            label="Volume ratio"
-            value={ctx.signals.volume_ratio}
-            min={0} max={3}
-            thresholdLow={0.25}
-          />
-          <SignalBar
-            label="Range / ATR"
-            value={ctx.signals.bar_range_ratio}
-            min={0} max={3}
-            thresholdLow={0.2}
-          />
-
-          <div className="grid grid-cols-2 gap-1 mt-1 text-xs">
-            <div className="bg-surface rounded p-1.5">
-              <div className="text-gray-500">Trend dir</div>
-              <div
-                className={
-                  ctx.signals.trend_direction === "up"
-                    ? "text-green-trade"
-                    : ctx.signals.trend_direction === "down"
-                    ? "text-red-trade"
-                    : "text-gray-400"
-                }
-              >
-                {ctx.signals.trend_direction === "up" ? "↑ Up" : ctx.signals.trend_direction === "down" ? "↓ Down" : "→ Flat"}
-              </div>
-            </div>
-            <div className="bg-surface rounded p-1.5">
-              <div className="text-gray-500">Abnormal move</div>
-              <div
-                className={ctx.signals.is_abnormal_move ? "text-red-trade font-semibold" : "text-gray-400"}
-              >
-                {ctx.signals.is_abnormal_move
-                  ? `Yes (${ctx.signals.abnormal_move_sigma.toFixed(1)}σ)`
-                  : `No (${ctx.signals.abnormal_move_sigma.toFixed(1)}σ)`}
-              </div>
-            </div>
-            <div className="bg-surface rounded p-1.5">
-              <div className="text-gray-500">Conf. threshold</div>
-              <div className={ctx.suppressed ? "text-red-trade" : "text-white"}>
-                {(ctx.confidence_threshold * 100).toFixed(0)}%
-              </div>
-            </div>
-            <div className="bg-surface rounded p-1.5">
-              <div className="text-gray-500">Quality min</div>
-              <div className="text-white">{ctx.min_signal_quality.toFixed(0)}</div>
-            </div>
-          </div>
-
-          {/* Distribution (if available) */}
-          {distribution && Object.keys(distribution.distribution).length > 0 && (
-            <div className="mt-1">
-              <div className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">
-                Distribution (stored history)
-              </div>
-              <RegimeDistributionChart distribution={distribution.distribution} />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab: history timeline */}
-      {tab === "history" && (
-        <div>
-          {history && history.count > 0 ? (
-            <RegimeTimeline history={history.history} />
-          ) : (
-            <div className="text-xs text-gray-600 italic text-center py-4">
-              No stored regime history yet.
-              <br />
-              Regime labels are saved automatically at each inference call.
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab: threshold table */}
-      {tab === "thresholds" && (
-        <div>
-          <div className="text-[10px] text-gray-600 mb-2">
-            Per-regime trading thresholds. Suppressed regimes (✗) never generate trade ideas
-            regardless of confidence.
-          </div>
-          <ThresholdTable thresholds={ctx.thresholds} />
-        </div>
-      )}
     </div>
   );
 }

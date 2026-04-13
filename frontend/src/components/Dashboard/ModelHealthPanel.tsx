@@ -100,10 +100,8 @@ export default function ModelHealthPanel({ symbol }: { symbol: string }) {
 
   const health = data?.calibration_health ?? "unknown";
 
-  // Extract needs_retrain if the API returns it (extended response)
-  const ext = data as any;
-  const needsRetrain: boolean = ext?.needs_retrain ?? false;
-  const retrainReason: string | null = ext?.retrain_reason ?? null;
+  const needsRetrain: boolean = data?.needs_retrain ?? false;
+  const retrainReason: string | null = data?.retrain_reason ?? null;
 
   return (
     <div className="inst-panel">

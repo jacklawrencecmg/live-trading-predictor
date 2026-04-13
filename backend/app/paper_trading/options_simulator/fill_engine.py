@@ -2,10 +2,17 @@
 Fill simulation engine.
 
 Translates a list of option legs + market quotes into simulated fill prices,
-net premium, and fee totals. Three fill methods are supported:
+net premium, and fee totals. Four fill methods are supported:
 
   MIDPOINT    — fill at (bid + ask) / 2. Optimistic; reasonable for liquid
                 names where mid is often achievable in practice.
+
+  MIDPOINT_PLUS_SLIPPAGE — mid ± slippage_factor × spread.
+                buy_fill  = mid + slippage_factor × (ask − bid)
+                sell_fill = mid − slippage_factor × (ask − bid)
+                Realistic middle ground: better than BID_ASK (which assumes
+                zero price improvement), worse than pure MIDPOINT. Appropriate
+                for names where partial mid fills are common but not guaranteed.
 
   BID_ASK     — buy at ask, sell at bid. Assumes no price improvement.
                 Conservative for single-leg; realistic for illiquid chains.
@@ -142,18 +149,30 @@ def _fill_one_leg(leg: SimLeg, quote, fill_config: FillConfig):
     """
     Return (fill_price, slippage_per_share) for a single leg.
 
-    For buy legs   : fill_price >= ask (CONSERVATIVE) or == ask (BID_ASK) or == mid (MIDPOINT)
-    For sell legs  : fill_price <= bid (CONSERVATIVE) or == bid (BID_ASK) or == mid (MIDPOINT)
+    Fill price ordering for buy legs (worst → best):
+      CONSERVATIVE >= BID_ASK (ask) >= MIDPOINT_PLUS_SLIPPAGE >= MIDPOINT (mid)
+
+    Fill price ordering for sell legs (best → worst):
+      CONSERVATIVE <= BID_ASK (bid) <= MIDPOINT_PLUS_SLIPPAGE <= MIDPOINT (mid)
     """
     bid = max(quote.bid, fill_config.min_tick)
     ask = max(quote.ask, fill_config.min_tick)
     mid = max(quote.mid, (bid + ask) / 2)
 
     spread = max(ask - bid, 0.0)
+    sf = fill_config.slippage_factor
 
     if fill_config.method == FillMethod.MIDPOINT:
         price = mid
         slippage = 0.0
+
+    elif fill_config.method == FillMethod.MIDPOINT_PLUS_SLIPPAGE:
+        if leg.action == "buy":
+            price = mid + sf * spread
+            slippage = sf * spread
+        else:
+            price = max(mid - sf * spread, fill_config.min_tick)
+            slippage = mid - price
 
     elif fill_config.method == FillMethod.BID_ASK:
         if leg.action == "buy":
@@ -164,7 +183,6 @@ def _fill_one_leg(leg: SimLeg, quote, fill_config: FillConfig):
             slippage = mid - bid
 
     else:   # CONSERVATIVE
-        sf = fill_config.slippage_factor
         if leg.action == "buy":
             price = ask + sf * spread
             slippage = price - mid

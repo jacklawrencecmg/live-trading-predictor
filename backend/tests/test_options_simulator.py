@@ -7,6 +7,8 @@ OS3  — FillMethod.BID_ASK: buy leg fills at ask
 OS4  — FillMethod.BID_ASK: sell leg fills at bid
 OS5  — FillMethod.CONSERVATIVE: buy leg > ask (extra slippage)
 OS6  — FillMethod.CONSERVATIVE: sell leg < bid (extra slippage)
+OS5b — FillMethod.MIDPOINT_PLUS_SLIPPAGE: buy leg fills between mid and ask
+OS6b — FillMethod.MIDPOINT_PLUS_SLIPPAGE: sell leg fills between bid and mid
 OS7  — Net premium: long call debit is positive
 OS8  — Net premium: credit spread is negative
 OS9  — Fee calculation: per_contract × contracts + regulatory
@@ -214,6 +216,28 @@ def test_conservative_sell_less_than_bid():
     # fill = bid - 0.25 × (ask - bid) = 1.80 - 0.10 = 1.70
     assert result.legs[0].fill_price < 1.80
     assert result.legs[0].fill_price == pytest.approx(1.70, abs=0.01)
+
+
+def test_midpoint_plus_slippage_buy_between_mid_and_ask():
+    # OS5b: buy fills at mid + slippage_factor × spread (between mid and ask)
+    legs = [SimLeg(action="buy", option_type="call", target_delta=0.4)]
+    quotes = _make_quotes(bid=1.80, ask=2.20)  # mid=2.00, spread=0.40
+    cfg = FillConfig(method=FillMethod.MIDPOINT_PLUS_SLIPPAGE, slippage_factor=0.25)
+    result = simulate_fill(legs, quotes, cfg, FeeConfig(), contracts=1)
+    # fill = 2.00 + 0.25 × 0.40 = 2.10
+    assert 2.00 < result.legs[0].fill_price < 2.20
+    assert result.legs[0].fill_price == pytest.approx(2.10, abs=0.01)
+
+
+def test_midpoint_plus_slippage_sell_between_bid_and_mid():
+    # OS6b: sell fills at mid - slippage_factor × spread (between bid and mid)
+    legs = [SimLeg(action="sell", option_type="put", target_delta=0.3)]
+    quotes = _make_quotes(bid=1.80, ask=2.20)  # mid=2.00, spread=0.40
+    cfg = FillConfig(method=FillMethod.MIDPOINT_PLUS_SLIPPAGE, slippage_factor=0.25)
+    result = simulate_fill(legs, quotes, cfg, FeeConfig(), contracts=1)
+    # fill = 2.00 - 0.25 × 0.40 = 1.90
+    assert 1.80 < result.legs[0].fill_price < 2.00
+    assert result.legs[0].fill_price == pytest.approx(1.90, abs=0.01)
 
 
 # ---------------------------------------------------------------------------

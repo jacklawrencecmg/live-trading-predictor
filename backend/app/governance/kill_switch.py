@@ -90,8 +90,7 @@ class KillSwitchService:
         Authoritative DB check.  Use for non-hot-path decisions.
         Also updates the module cache.
         """
-        from app.core.config import get_settings
-        settings = get_settings()
+        from app.core.config import settings
         if settings.kill_switch:          # env-var override always wins
             _cache_set(True)
             return True
@@ -107,12 +106,12 @@ class KillSwitchService:
         Returns cached value; use is_active_db() to refresh.
         Always defers to settings.kill_switch env override.
         """
-        from app.core.config import get_settings
+        from app.core.config import settings
         try:
-            if get_settings().kill_switch:
+            if settings.kill_switch:
                 return True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("is_active_cached: failed to read settings: %s", exc)
         active, fresh = _cache_get()
         if fresh:
             return active

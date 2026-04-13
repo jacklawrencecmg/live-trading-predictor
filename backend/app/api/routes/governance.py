@@ -61,6 +61,8 @@ from app.governance.kill_switch import KillSwitchService
 from app.governance.registry import FeatureRegistryService, ModelRegistryService
 from app.governance.schemas import (
     AcknowledgeRequest,
+    BulkOutcomeRequest,
+    BulkOutcomeResponse,
     CalibrationSnapshotOut,
     DeprecateRequest,
     DriftSnapshotOut,
@@ -388,7 +390,7 @@ async def record_inference_outcome(
     Record the actual price direction for a specific inference event.
     actual_outcome: 1=up, 0=down.
     """
-    from sqlalchemy import select as sa_select, update as sa_update
+    from sqlalchemy import select as sa_select
     from app.governance.models import InferenceEvent
     result = await db.execute(
         sa_select(InferenceEvent).where(InferenceEvent.id == event_id)
@@ -400,6 +402,45 @@ async def record_inference_outcome(
     ev.outcome_recorded_at = datetime.utcnow()
     await db.commit()
     return {"id": event_id, "actual_outcome": req.actual_outcome}
+
+
+@router.post("/inference-log/bulk-outcomes", response_model=BulkOutcomeResponse, status_code=200)
+async def record_bulk_outcomes(
+    req: BulkOutcomeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Back-fill actual_outcome for multiple (symbol, bar_open_time) pairs in one request.
+
+    Used by the bar-close automation to resolve all pending inference events when
+    a bar's direction is known.  More efficient than calling the single-event endpoint
+    in a loop.
+
+    Returns a count of rows updated per symbol so callers can audit completeness.
+    """
+    by_symbol: Dict[str, int] = {}
+    total_updated = 0
+
+    try:
+        for item in req.outcomes:
+            n = await InferenceLogService.record_outcome(
+                db,
+                symbol=item.symbol.upper(),
+                bar_open_time=item.bar_open_time,
+                actual_outcome=item.actual_outcome,
+            )
+            by_symbol[item.symbol.upper()] = by_symbol.get(item.symbol.upper(), 0) + n
+            total_updated += n
+    except Exception:
+        await db.rollback()
+        raise
+
+    await db.commit()
+    return BulkOutcomeResponse(
+        total_submitted=len(req.outcomes),
+        total_updated=total_updated,
+        by_symbol=by_symbol,
+    )
 
 
 # ---------------------------------------------------------------------------

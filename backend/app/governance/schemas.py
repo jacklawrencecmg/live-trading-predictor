@@ -133,6 +133,27 @@ class RecordOutcomeRequest(BaseModel):
     actual_outcome: int = Field(..., ge=0, le=1, description="1=up, 0=down")
 
 
+class BulkOutcomeItem(BaseModel):
+    symbol: str
+    bar_open_time: datetime
+    actual_outcome: int = Field(..., ge=0, le=1, description="1=up, 0=down")
+
+
+class BulkOutcomeRequest(BaseModel):
+    outcomes: List[BulkOutcomeItem] = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="List of bar outcomes to back-fill",
+    )
+
+
+class BulkOutcomeResponse(BaseModel):
+    total_submitted: int
+    total_updated: int
+    by_symbol: Dict[str, int]   # symbol → rows updated
+
+
 # ---------------------------------------------------------------------------
 # Drift
 # ---------------------------------------------------------------------------
@@ -261,6 +282,7 @@ class KillSwitchRequest(BaseModel):
 class GovernanceSummaryOut(BaseModel):
     generated_at: datetime
     kill_switch_active: bool
+    kill_switch_reason: Optional[str] = None
 
     active_model: Optional[Dict[str, Any]]
     active_feature_manifest: Optional[str]

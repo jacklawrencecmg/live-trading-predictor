@@ -17,9 +17,10 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 class FillMethod(str, Enum):
-    MIDPOINT    = "midpoint"     # fill at (bid + ask) / 2
-    BID_ASK     = "bid_ask"      # buy at ask, sell at bid
-    CONSERVATIVE = "conservative" # buy at ask + slippage, sell at bid - slippage
+    MIDPOINT              = "midpoint"               # fill at (bid + ask) / 2
+    MIDPOINT_PLUS_SLIPPAGE = "midpoint_plus_slippage" # mid ± slippage_factor × spread
+    BID_ASK               = "bid_ask"                # buy at ask, sell at bid
+    CONSERVATIVE          = "conservative"            # buy at ask + slippage, sell at bid - slippage
 
 
 # ---------------------------------------------------------------------------
