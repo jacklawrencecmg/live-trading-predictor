@@ -3,7 +3,7 @@
 
   // Ubuntu base + Python 3.11 + Node 20 + PostgreSQL 16 as devcontainer features.
   // No Docker-in-Docker needed — services run directly as processes.
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
 
   "features": {
     "ghcr.io/devcontainers/features/python:1": { "version": "3.11" },
