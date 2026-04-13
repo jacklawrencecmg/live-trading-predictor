@@ -1,4 +1,3 @@
-"use client";
 import { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useWebSocket, WSMessage } from "@/hooks/useWebSocket";
